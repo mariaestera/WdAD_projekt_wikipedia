@@ -1,0 +1,130 @@
+---
+title: "WdAD"
+author: "Michał Stadnik"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Libraries
+```{r}
+library(dplyr)
+library(tidyr)
+```
+
+
+```{r}
+path = "D:\\Programowanie\\R\\WdAD\\WdAD_projekt_wikipedia-main\\data\\math_19_10_2025.csv"
+
+data = read.csv(path, row.names = "X") #In the "X" column are indexes
+
+data = subset(data, select = -image_titles) #I think image_titles is useless
+
+```
+
+Two interesting findings:
+```{r}
+data |> 
+  filter(
+    word_count == 0
+  )
+```
+
+These are the pages which was redirected to other (I checked it for first 10). I think they are useless too.
+
+```{r}
+data <- data |> 
+  filter(
+    word_count != 0
+  )
+```
+
+```{r}
+data |> 
+  filter(
+    word_count <= num_links_internal & word_count > 0
+  )
+```
+
+Mainly they are a list articles (articles in which is a list of other articles) or short articles with lists of something, but sometimes for some reason there are other articles (see "Trapping region" or "European Society for Mathematics and the Arts"). These other articles are also short, but contain a big cathegory block, and probably links in this block was counted. Interesting think happens for example in "Graduate Studies in Mathematics", where there is list with 251 positions, but in data set it is only 61 ordinary words and 120 internal links. Here should be at least 251 links, because each position has at least one link. 
+
+Here we see that links are counted seperatly than words. It is worth to note that links can contain two or more words, and in that case they are also counted as one link.
+
+```{r}
+summary(data)
+```
+Let's note quite large maximum values in `mo_page_views`, `clicks_in`, `clicks_out` and `clicks_per_view` (which is directly corelated with first 3 variables). Let`s check this outliers.
+```{r}
+data |> 
+  slice_max(mo_page_views, n=20, with_ties = TRUE) |> 
+  select(
+    title, mo_page_views , clicks_in, clicks_out, clicks_per_view
+  )
+```
+Good question is, why Sagrada Familia has category "Matematics"? The answer is, it has category "Mathematics and art". So in this dataset are articles with at least one category which contains word "Mathematics". However it is not a big outlier. We can see, that `mo_page_views` has heavy tails, not a few large outliers. I think we should take a logharitm of this column.
+```{r}
+data |> 
+  slice_max(clicks_in, n = 20, with_ties = TRUE) |> 
+  select(
+    title, mo_page_views , clicks_in, clicks_out, clicks_per_view
+  )
+```
+Same results here. Also this column should be logharitmed. "Gifted" is a movie about mathematical genius, so its presents here is justiced.
+```{r}
+data |> 
+  slice_max(clicks_out, n = 20, with_ties = TRUE) |> 
+  select(
+    title, mo_page_views , clicks_in, clicks_out, clicks_per_view
+  )
+```
+Here are outliers. Let's note only first 4 rows are above 20.000, and only 10 next are above 10.000. Let's delete them and check summary.
+```{r}
+data <- data |> 
+  filter(
+    clicks_out < 10000
+  )
+
+summary(data$clicks_out)
+```
+Ohh, they also should be logharitmed.
+```{r}
+data |> 
+  slice_max(clicks_per_view, n = 20, with_ties = TRUE) |> 
+  select(
+    title, mo_page_views , clicks_in, clicks_out, clicks_per_view
+  )
+```
+Here "2 + 2 = 5" is definitely an outlier. We should consider delete it. Let's look at summary without this one:
+```{r}
+data <- data |> 
+  filter(
+    title != "2 + 2 = 5"
+  )
+
+summary(data$clicks_per_view)
+```
+Let's logharitm this columns.
+```{r}
+data <- data |> 
+  mutate(
+    log_mo_page_views = log1p(mo_page_views), #log1p = log(1+x), becouse we have 0
+    log_clicks_in = log1p(clicks_in),
+    log_clicks_out = log1p(clicks_out),
+    log_clicks_per_view = log1p(clicks_per_view),
+  )
+
+summary(data[c('log_mo_page_views', 'log_clicks_in', 'log_clicks_out', 'log_clicks_per_view')])
+```
+Let's see histograms
+```{r}
+numeric_cols <- names(data)[sapply(data, is.numeric)]
+
+for (i in numeric_cols){
+  hist(data[[i]], xlab = i)
+}
+```
+
+Histograms of `log_mo_page_views`, `log_clicks_in` and `logclicks_out` looks like closly to normal distributions, but it demands deleting of 0-values. However `clicks_per_view` doesn't behave normaly, even after logarithm.
+
