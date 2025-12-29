@@ -32,7 +32,7 @@ data |>
   )
 ```
 
-These are the pages which was redirected to other (I checked it for first 10). I think they are useless too.
+These are the pages which was redirected to other (I checked it for first 10). I think they are useless too. Let's note their summary are empty.
 
 ```{r}
 data <- data |> 
@@ -41,6 +41,15 @@ data <- data |>
   )
 ```
 
+Let's check if there are other rows with empty summary.
+
+```{r}
+data |> 
+  filter(
+    summary == ""
+  )
+```
+So all pages with empty summary had 0 word_count.
 ```{r}
 data |> 
   filter(
