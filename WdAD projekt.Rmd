@@ -114,17 +114,14 @@ data <- data |>
 
 summary(data$clicks_per_view)
 ```
-Let's logharitm this columns.
+Let's logharitm all numeric columns by the way.
 ```{r}
-data <- data |> 
-  mutate(
-    log_mo_page_views = log1p(mo_page_views), #log1p = log(1+x), becouse we have 0
-    log_clicks_in = log1p(clicks_in),
-    log_clicks_out = log1p(clicks_out),
-    log_clicks_per_view = log1p(clicks_per_view),
-  )
+data <- data %>%
+  mutate(across(where(is.numeric), log1p, .names = "log_{.col}"))
 
-summary(data[c('log_mo_page_views', 'log_clicks_in', 'log_clicks_out', 'log_clicks_per_view')])
+log_variables <- data[c('log_mo_page_views', 'log_clicks_in', 'log_clicks_out', 'log_clicks_per_view')]
+
+summary(log_variables)
 ```
 Let's see histograms
 ```{r}
@@ -135,5 +132,5 @@ for (i in numeric_cols){
 }
 ```
 
-Histograms of `log_mo_page_views`, `log_clicks_in` and `logclicks_out` looks like closly to normal distributions, but it demands deleting of 0-values. However `clicks_per_view` doesn't behave normaly, even after logarithm.
+Histograms of `log_mo_page_views`, `log_clicks_in` and `log_clicks_out` looks like closly to normal distributions, but it demands deleting of 0-values. However `clicks_per_view` doesn't behave normaly, even after logarithm.
 
