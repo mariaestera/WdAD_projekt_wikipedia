@@ -161,3 +161,19 @@ summary(zero_data)
 ```
 
 Mostly variables have lower means than in the whole dataset. Especially `mo_page_views` and `clicks_in`, however it is also visible that they are mainly shorter articles with lower number of links. Maybe we should consider two-step alghorithm, where on the first step we classify whether article has 0 `clicks_per_view` ratio or not, and if our method says it differs from zero, we try predict how much it is?
+
+Because, `clicks_per_view` is calculated as `clicks_out`/`mo_page_views`, and `clicks_in` can also be highly corelated with this variables in order to prevent data leakage, we will train our models on data without this variables. We also create seperate dataframes with data and logharitmed versions
+```{r}
+leakage_cols <- c("clicks_in", "clicks_out", "mo_page_views", "log_clicks_in", "log_clicks_out", "log_mo_page_views")
+
+data_for_models <- data |> 
+  select(-any_of(leakage_cols)) %>%
+  select(-starts_with("log_"))
+
+log_data_for_models <- data_for_models %>%
+  mutate(across(
+    .cols = where(is.numeric) & !clicks_per_view, 
+    .fns = log1p,
+    .names = "log_{.col}"
+  ))
+```
