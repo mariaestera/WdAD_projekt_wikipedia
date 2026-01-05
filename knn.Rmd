@@ -14,7 +14,6 @@ output:
     toc_depth: '3'
 ---
 
-
 ```{css, echo=FALSE}
 body{
   font-family: Avenir, Helvetica, "sans serif"
@@ -23,7 +22,6 @@ h1,h2,h3,h4,h5,h6{
   font-family: Avenir, Helvetica, "sans serif"
 }
 ```
-
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -39,14 +37,14 @@ W ramach rego skryptu zastaną przetestowane możliwości algorytmu KNN w zakres
 
 -   kombinacja obu metod: przewidywanie, czy `clicks_per_view > 0`, a następnie regresja dokładnej wartości wskaźnika
 
-    Ze względu na duży rozmiar danych (\~30 000 wierszy) w ramach analizy wykorzystanie zostanie algorytm Fast KNN (`fknn)`. Przetestowane zostaną również możliwości związane z nierówną wagą cech, które możemy wyekstrachować np. z `Random Forest`.
+    Ze względu na duży rozmiar danych (\~30 000 wierszy) w ramach analizy wykorzystany zostanie algorytm Fast KNN (`fknn`).
 
 ```{r}
 dane <- read.csv("data/wikipedia.csv", row.names = 1)
 ```
 
 ```{r}
-head(dane)
+head(subset(dane, select = -summary))
 nrow(dane)
 ```
 
@@ -139,11 +137,9 @@ panel_for_col <- function(col) {
   
   log_col <- paste0("log_", col)
   
-  # --- obliczenie korelacji ---
   cor_raw <- cor(train[[col]], train$log_clicks_per_view, use = "complete.obs")
   cor_log <- cor(train[[log_col]], train$log_clicks_per_view, use = "complete.obs")
   
-  # --- wykresy ---
   p1 <- ggplot(train, aes_string(x = col)) +
     geom_histogram(bins = 40, fill = "steelblue", alpha = 0.7) +
     ggtitle(paste("Histogram:", col))
@@ -166,7 +162,6 @@ panel_for_col <- function(col) {
              size = 4, color = "black") +
     ggtitle(paste("log_clicks_per_view vs", log_col))
   
-  # panel 2×2
   (p1 | p2) /
   (p3 | p4)
 }
@@ -178,39 +173,19 @@ walk(cols_with_log, ~ print(panel_for_col(.x)))
 ```
 
 ```{r}
+cols <- c("log_clicks_per_view", "log_word_count", "num_images", "num_categories", "log_num_links_internal", "log_num_editors", "num_edits", "creation_date_timestamp", "log_links_per_word")
+
+
 log_cols <- num_cols[str_starts(num_cols, "log_")] 
 cols_with_log_version <- num_cols[ paste0("log_", num_cols) %in% names(train) ] 
 cols_without_logs <- setdiff( num_cols, union(log_cols, cols_with_log_version) ) 
 
-
-plot_for_col <- function(col) {
-
-  n_unique <- n_distinct(train[[col]])
-  
-  if (n_unique <= 5) {
-      p <- ggplot(train, aes(x = factor(.data[[col]]), y = log_clicks_per_view)) + 
-        geom_boxplot(fill = "steelblue", alpha = 0.6) +
-        xlab(col)
-    
-  } else {
-    p <- ggplot(train, aes_string(x = col, y = "log_clicks_per_view")) +
-      geom_point(alpha = 0.4, color = "darkorange") +
-      ggtitle(paste0(col, " (", n_unique, " unique) — scatterplot"))
-  }
-  
-  p
-}
-
-walk(cols_without_logs, ~ print(plot_for_col(.x)))
-```
-
-```{r}
-cols <- c("log_clicks_per_view", "log_word_count", "num_images", "num_categories", "log_num_links_internal", "log_num_editors", "num_edits", "creation_date_timestamp", "log_links_per_word")
-
 features <- union(cols, cols_without_logs)
 features <- setdiff(features, c("clicks_in" ,"clicks_per_view","mo_page_views","clicks_out"))
+
 features
 ```
+
 ### Normalizacja danych
 
 ```{r}
@@ -229,25 +204,22 @@ test[cols_to_scale] <- sweep(test[cols_to_scale], 2, m, "-")
 test[cols_to_scale] <- sweep(test[cols_to_scale], 2, s, "/")
 ```
 
-
-
-
-### Clicks per view: 0 vs. >0
+### Clicks per view: 0 vs. \>0
 
 ```{r}
 table(train$log_clicks_per_view > 0)
-```
-Klasy są zbalansowane:)
 
-```{r}
-library(FNN)
+table(test$log_clicks_per_view > 0)
 ```
+
+Klasy są zbalansowane i podobnie rozłożone w zbiorze treningowym i testowym:)
 
 Cross-validation liczby sąsiadów
 
 ```{r}
-y <- ifelse(train$log_clicks_per_view > 0, 1, 0)
+library(FNN)
 
+y <- ifelse(train$log_clicks_per_view > 0, 1, 0)
 X <- train %>% select(-log_clicks_per_view)
 
 set.seed(123)
@@ -294,12 +266,23 @@ cv_table
 
 ```{r}
 library(plotly)
-plot_ly( data = cv_table, x = ~k, y = ~accuracy, type = "scatter", mode = "lines+markers" )
+
+plot_ly(
+  data = cv_table,
+  x = ~k,
+  y = ~accuracy,
+  type = "scatter",
+  mode = "lines+markers"
+) %>%
+  layout(
+    title = "Cross Validation for k - klasyfikacja KNN",
+    xaxis = list(title = "k"),
+    yaxis = list(title = "Accuracy")
+  )
+
 ```
 
-
-
-test modelu dla wybranego k
+Test modelu dla wybranego k
 
 ```{r}
 y_train <- ifelse(train$log_clicks_per_view > 0, 1, 0)
@@ -324,6 +307,7 @@ tab
 accuracy <- mean(pred == y_test)
 accuracy
 ```
+
 ### Regresja KNN
 
 ```{r}
@@ -372,9 +356,19 @@ cv_reg_table
 ```
 
 ```{r}
-plot_ly( data = cv_reg_table, x = ~k, y = ~RMSE, type = "scatter", mode = "lines+markers" )
+plot_ly(
+  data = cv_reg_table,
+  x = ~k,
+  y = ~RMSE,
+  type = "scatter",
+  mode = "lines+markers"
+) %>%
+  layout(
+    title = "Cross Validation for k - regresja KNN",
+    xaxis = list(title = "k"),
+    yaxis = list(title = "RMSE")
+  )
 ```
-
 
 ```{r}
 y_train <- train$log_clicks_per_view
@@ -395,19 +389,16 @@ pred <- knn.reg(
 rmse <- sqrt(mean((pred - y_test)^2))
 mae  <- mean(abs(pred - y_test))
 
-rmse
-mae
-```
-
-```{r}
 ss_res <- sum((y_test - pred)^2)
 ss_tot <- sum((y_test - mean(y_test))^2)
 
 r2 <- 1 - ss_res/ss_tot
+
+
+rmse
+mae
 r2
 ```
-
-
 
 ```{r}
 pred_train <- knn.reg(
@@ -446,10 +437,9 @@ ggplot(df_plot, aes(x = actual, y = pred, color = set, shape = set)) +
 
 ### Combined approach
 
-```{r}
-library(FNN)
-library(dplyr)
+1)  regression for obserwations with `clicks per view > 0`
 
+```{r}
 train_pos <- train %>% filter(log_clicks_per_view > 0)
 test_pos  <- test  %>% filter(log_clicks_per_view > 0)
 
@@ -471,62 +461,20 @@ pred <- knn.reg(
 rmse <- sqrt(mean((pred - y_test)^2))
 mae  <- mean(abs(pred - y_test))
 
-rmse
-mae
-
 ss_res <- sum((y_test - pred)^2)
 ss_tot <- sum((y_test - mean(y_test))^2)
 
 r2 <- 1 - ss_res/ss_tot
+rmse
+mae
 r2
 ```
-```{r}
-y <- train_pos$log_clicks_per_view
-X <- train_pos %>% select(-log_clicks_per_view)
 
-set.seed(123)
-K_folds <- 5
-folds <- sample(rep(1:K_folds, length.out = nrow(X)))
+2)  Two-step KNN:
 
-k_values <- seq(5, 25, by = 2)
-cv_rmse <- numeric(length(k_values))
+-   klasyfikacja, czy click per view jest dodatni
 
-for (i in seq_along(k_values)) {
-  k <- k_values[i]
-  rmse_vec <- numeric(K_folds)
-  
-  for (fold in 1:K_folds) {
-    train_idx <- which(folds != fold)
-    test_idx  <- which(folds == fold)
-    
-    X_tr <- X[train_idx, ]
-    X_te <- X[test_idx, ]
-    y_tr <- y[train_idx]
-    y_te <- y[test_idx]
-    
-    pred <- knn.reg(
-      train = X_tr,
-      test  = X_te,
-      y     = y_tr,
-      k     = k
-    )$pred
-    
-    rmse_vec[fold] <- sqrt(mean((pred - y_te)^2))
-  }
-  
-  cv_rmse[i] <- mean(rmse_vec)
-}
-
-cv_reg_table <- data.frame(
-  k = k_values,
-  RMSE = cv_rmse
-)
-
-cv_reg_table
-```
-```{r}
-plot_ly( data = cv_reg_table, x = ~k, y = ~RMSE, type = "scatter", mode = "lines+markers" )
-```
+-   regresja dla wierszy sklasyfikowanych jako dodatnie
 
 ```{r}
 y_train <- train$log_clicks_per_view
@@ -569,17 +517,17 @@ final_pred <- pred_reg
 rmse <- sqrt(mean((final_pred - y_test)^2))
 mae  <- mean(abs(final_pred - y_test))
 
-rmse
-mae
-
-```
-```{r}
 ss_res <- sum((y_test - final_pred)^2)
 ss_tot <- sum((y_test - mean(y_test))^2)
-
 r2 <- 1 - ss_res/ss_tot
+
+rmse
+mae
 r2
 ```
+
+Wizualizacja
+
 ```{r}
 pred_class_train <- knn(
   train = X_train,
@@ -646,82 +594,6 @@ ggplot(df_plot, aes(x = actual, y = pred, color = set, shape = set)) +
     y = "Predicted"
   ) +
   theme_minimal()
-
-```
-### Ekstrakcja cech
-
-```{r}
-library(C50)
-
-train_c50 <- train %>%
-  mutate(target = factor(ifelse(log_clicks_per_view > 0, "pos", "zero"))) %>%
-  select(-log_clicks_per_view)
-
-test_c50 <- test %>%
-  mutate(target = factor(ifelse(log_clicks_per_view > 0, "pos", "zero"))) %>%
-  select(-log_clicks_per_view)
-```
-```{r}
-model_c50 <- C5.0( x = train_c50 %>% select(-target), 
-                   y = train_c50$target, 
-                   trials = 1 )
-
-pred_c50 <- predict(model_c50, test_c50)
-
-table(pred_c50, test_c50$target)
-
-accuracy <- mean(pred_c50 == test_c50$target)
-accuracy
-```
-```{r}
-importance <- C5imp(model_c50)
-importance
-
-
-importance_df <- importance %>%
-  tibble::rownames_to_column("feature") %>%
-  arrange(desc(Overall))
-
-ggplot(importance_df, aes(x = reorder(feature, Overall), y = Overall)) +
-  geom_col(fill = "steelblue") +
-  coord_flip() +
-  labs(
-    title = "Feature importance — C5.0",
-    x = "Feature",
-    y = "Importance"
-  ) +
-  theme_minimal()
-
 ```
 
-```{r}
-w <- importance_df$Overall
-w <- w / sum(w)
-names(w) <- importance_df$feature
-
-
-y_train <- ifelse(train$log_clicks_per_view > 0, 1, 0)
-y_test  <- ifelse(test$log_clicks_per_view > 0, 1, 0)
-
-X_train <- train %>% select(-log_clicks_per_view)
-X_test  <- test  %>% select(-log_clicks_per_view)
-
-w <- w[colnames(X_train)]
-
-X_train_w <- sweep(X_train, 2, w, `*`)
-X_test_w  <- sweep(X_test, 2, w, `*`)
-
-pred <- knn(
-  train = X_train_w,
-  test  = X_test_w,
-  cl     = y_train,
-  k     = 11
-)
-
-tab <- table(Predicted = pred, Actual = y_test)
-tab
-
-accuracy <- mean(pred == y_test)
-accuracy
-```
-
+Wniosek: proste podejście dawało bardzo podobne - jeśli nie lepsze - rezultaty.
