@@ -1,0 +1,599 @@
+---
+title: "KNN"
+author: "Maria Pieczarka"
+date: "2026-01-05"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: united
+    highlight: tango
+  pdf_document:
+    toc: true
+    toc_depth: '3'
+---
+
+```{css, echo=FALSE}
+body{
+  font-family: Avenir, Helvetica, "sans serif"
+}
+h1,h2,h3,h4,h5,h6{
+  font-family: Avenir, Helvetica, "sans serif"
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Algorytm K-Nearest Neighbors (KNN)
+
+W ramach rego skryptu zastaną przetestowane możliwości algorytmu KNN w zakresie klasyfikacji i regresji. Celem będzie:
+
+-   klasyfikacja: `clicks_per_view = 0` vs. `clicks_per_view > 0`
+
+-   regresja: przewidywanie wskaźnika `clicks_per_view`
+
+-   kombinacja obu metod: przewidywanie, czy `clicks_per_view > 0`, a następnie regresja dokładnej wartości wskaźnika
+
+    Ze względu na duży rozmiar danych (\~30 000 wierszy) w ramach analizy wykorzystany zostanie algorytm Fast KNN (`fknn`).
+
+```{r}
+dane <- read.csv("data/wikipedia.csv", row.names = 1)
+```
+
+```{r}
+head(subset(dane, select = -summary))
+nrow(dane)
+```
+
+### Train-test split
+
+```{r}
+library(dplyr) 
+
+set.seed(123) 
+train <- dane %>% sample_frac(0.8) 
+test <- anti_join(dane, train)
+
+rm(dane)
+gc()
+```
+
+### Feature selection
+
+```{r}
+library(gt)
+library(purrr)
+library(tibble) 
+train %>% select(where(is.numeric))%>% 
+  map_df(~ as.list(summary(.x))) %>% 
+  mutate(variable = names(select(train, where(is.numeric)))) %>% 
+  relocate(variable) %>% gt()
+```
+
+```{r}
+library(ggplot2)
+library(stringr)
+
+
+num_cols <- train %>%
+  select(where(is.numeric)) %>%
+  names()
+
+cols_with_log <- num_cols[
+  paste0("log_", num_cols) %in% names(train)
+]
+
+
+cols_with_log <- setdiff(cols_with_log, "log_clicks_per_view")
+
+
+plot_for_col <- function(col) {
+  
+  log_col <- paste0("log_", col)
+  
+  p1 <- ggplot(train, aes_string(x = col)) +
+    geom_histogram(bins = 40, fill = "steelblue", alpha = 0.7) +
+    ggtitle(paste("Histogram:", col))
+  
+  p2 <- ggplot(train, aes_string(x = log_col)) +
+    geom_histogram(bins = 40, fill = "darkorange", alpha = 0.7) +
+    ggtitle(paste("Histogram:", log_col))
+  
+  p3 <- ggplot(train, aes_string(x = col, y = "log_clicks_per_view")) +
+    geom_point(alpha = 0.4) +
+    ggtitle(paste("log_clicks_per_view vs", col))
+  
+  p4 <- ggplot(train, aes_string(x = log_col, y = "log_clicks_per_view")) +
+    geom_point(alpha = 0.4) +
+    ggtitle(paste("log_clicks_per_view vs", log_col))
+  
+  list(p1 = p1, p2 = p2, p3 = p3, p4 = p4)
+}
+
+all_plots <- map(cols_with_log, plot_for_col)
+
+```
+
+```{r}
+library(ggplot2)
+library(stringr)
+library(patchwork)
+
+num_cols <- train %>%
+  select(where(is.numeric)) %>%
+  names()
+
+cols_with_log <- num_cols[
+  paste0("log_", num_cols) %in% names(train)
+]
+
+cols_with_log <- setdiff(cols_with_log, "log_clicks_per_view")
+
+
+panel_for_col <- function(col) {
+  
+  log_col <- paste0("log_", col)
+  
+  cor_raw <- cor(train[[col]], train$log_clicks_per_view, use = "complete.obs")
+  cor_log <- cor(train[[log_col]], train$log_clicks_per_view, use = "complete.obs")
+  
+  p1 <- ggplot(train, aes_string(x = col)) +
+    geom_histogram(bins = 40, fill = "steelblue", alpha = 0.7) +
+    ggtitle(paste("Histogram:", col))
+  
+  p2 <- ggplot(train, aes_string(x = log_col)) +
+    geom_histogram(bins = 40, fill = "darkorange", alpha = 0.7) +
+    ggtitle(paste("Histogram:", log_col))
+  
+  p3 <- ggplot(train, aes_string(x = col, y = "log_clicks_per_view")) +
+    geom_point(color = "steelblue", alpha = 0.1) +
+    annotate("text", x = Inf, y = Inf, hjust = 1.1, vjust = 1.5,
+             label = paste0("corr = ", round(cor_raw, 3)),
+             size = 4, color = "black") +
+    ggtitle(paste("log_clicks_per_view vs", col))
+  
+  p4 <- ggplot(train, aes_string(x = log_col, y = "log_clicks_per_view")) +
+    geom_point(color = "darkorange", alpha = 0.1) +
+    annotate("text", x = Inf, y = Inf, hjust = 1.1, vjust = 1.5,
+             label = paste0("corr = ", round(cor_log, 3)),
+             size = 4, color = "black") +
+    ggtitle(paste("log_clicks_per_view vs", log_col))
+  
+  (p1 | p2) /
+  (p3 | p4)
+}
+
+
+
+walk(cols_with_log, ~ print(panel_for_col(.x)))
+
+```
+
+```{r}
+cols <- c("log_clicks_per_view", "log_word_count", "num_images", "num_categories", "log_num_links_internal", "log_num_editors", "num_edits", "creation_date_timestamp", "log_links_per_word")
+
+
+log_cols <- num_cols[str_starts(num_cols, "log_")] 
+cols_with_log_version <- num_cols[ paste0("log_", num_cols) %in% names(train) ] 
+cols_without_logs <- setdiff( num_cols, union(log_cols, cols_with_log_version) ) 
+
+features <- union(cols, cols_without_logs)
+features <- setdiff(features, c("clicks_in" ,"clicks_per_view","mo_page_views","clicks_out"))
+
+features
+```
+
+### Normalizacja danych
+
+```{r}
+train <- select(train, features)
+test  <- select(test,  features)
+
+cols_to_scale <- setdiff(names(train), "log_clicks_per_view")
+
+m <- sapply(train[cols_to_scale], mean)
+s <- sapply(train[cols_to_scale], sd)
+
+train[cols_to_scale] <- sweep(train[cols_to_scale], 2, m, "-")
+train[cols_to_scale] <- sweep(train[cols_to_scale], 2, s, "/")
+
+test[cols_to_scale] <- sweep(test[cols_to_scale], 2, m, "-")
+test[cols_to_scale] <- sweep(test[cols_to_scale], 2, s, "/")
+```
+
+### Clicks per view: 0 vs. \>0
+
+```{r}
+table(train$log_clicks_per_view > 0)
+
+table(test$log_clicks_per_view > 0)
+```
+
+Klasy są zbalansowane i podobnie rozłożone w zbiorze treningowym i testowym:)
+
+Cross-validation liczby sąsiadów
+
+```{r}
+library(FNN)
+
+y <- ifelse(train$log_clicks_per_view > 0, 1, 0)
+X <- train %>% select(-log_clicks_per_view)
+
+set.seed(123)
+K_folds <- 5
+folds <- sample(rep(1:K_folds, length.out = nrow(X)))
+
+k_values <- seq(1, 19, by = 2)
+cv_results <- numeric(length(k_values))
+
+for (i in seq_along(k_values)) {
+  k <- k_values[i]
+  acc_vec <- numeric(K_folds)
+  
+  for (fold in 1:K_folds) {
+    train_idx <- which(folds != fold)
+    test_idx  <- which(folds == fold)
+    
+    X_tr <- X[train_idx, ]
+    X_te <- X[test_idx, ]
+    y_tr <- y[train_idx]
+    y_te <- y[test_idx]
+    
+    pred <- knn(
+      train = X_tr,
+      test  = X_te,
+      cl    = y_tr,
+      k     = k
+    )
+    
+    acc_vec[fold] <- mean(pred == y_te)
+  }
+  
+  cv_results[i] <- mean(acc_vec)
+}
+
+cv_table <- data.frame(
+  k = k_values,
+  accuracy = cv_results
+)
+
+cv_table
+
+```
+
+```{r}
+library(plotly)
+
+plot_ly(
+  data = cv_table,
+  x = ~k,
+  y = ~accuracy,
+  type = "scatter",
+  mode = "lines+markers"
+) %>%
+  layout(
+    title = "Cross Validation for k - klasyfikacja KNN",
+    xaxis = list(title = "k"),
+    yaxis = list(title = "Accuracy")
+  )
+
+```
+
+Test modelu dla wybranego k
+
+```{r}
+y_train <- ifelse(train$log_clicks_per_view > 0, 1, 0)
+y_test  <- ifelse(test$log_clicks_per_view > 0, 1, 0)
+
+X_train <- train %>% select(-log_clicks_per_view)
+X_test  <- test  %>% select(-log_clicks_per_view)
+
+set.seed(123)
+k <- 11
+
+pred <- knn(
+  train = X_train,
+  test  = X_test,
+  cl    = y_train,
+  k     = k
+)
+
+tab <- table(Predicted = pred, Actual = y_test)
+tab
+
+accuracy <- mean(pred == y_test)
+accuracy
+```
+
+### Regresja KNN
+
+```{r}
+y <- train$log_clicks_per_view
+X <- train %>% select(-log_clicks_per_view)
+
+set.seed(123)
+K_folds <- 5
+folds <- sample(rep(1:K_folds, length.out = nrow(X)))
+
+k_values <- seq(5, 25, by = 2)
+cv_rmse <- numeric(length(k_values))
+
+for (i in seq_along(k_values)) {
+  k <- k_values[i]
+  rmse_vec <- numeric(K_folds)
+  
+  for (fold in 1:K_folds) {
+    train_idx <- which(folds != fold)
+    test_idx  <- which(folds == fold)
+    
+    X_tr <- X[train_idx, ]
+    X_te <- X[test_idx, ]
+    y_tr <- y[train_idx]
+    y_te <- y[test_idx]
+    
+    pred <- knn.reg(
+      train = X_tr,
+      test  = X_te,
+      y     = y_tr,
+      k     = k
+    )$pred
+    
+    rmse_vec[fold] <- sqrt(mean((pred - y_te)^2))
+  }
+  
+  cv_rmse[i] <- mean(rmse_vec)
+}
+
+cv_reg_table <- data.frame(
+  k = k_values,
+  RMSE = cv_rmse
+)
+
+cv_reg_table
+```
+
+```{r}
+plot_ly(
+  data = cv_reg_table,
+  x = ~k,
+  y = ~RMSE,
+  type = "scatter",
+  mode = "lines+markers"
+) %>%
+  layout(
+    title = "Cross Validation for k - regresja KNN",
+    xaxis = list(title = "k"),
+    yaxis = list(title = "RMSE")
+  )
+```
+
+```{r}
+y_train <- train$log_clicks_per_view
+y_test  <- test$log_clicks_per_view
+
+X_train <- train %>% select(-log_clicks_per_view)
+X_test  <- test  %>% select(-log_clicks_per_view)
+
+k <- 25   
+
+pred <- knn.reg(
+  train = X_train,
+  test  = X_test,
+  y     = y_train,
+  k     = k
+)$pred
+
+rmse <- sqrt(mean((pred - y_test)^2))
+mae  <- mean(abs(pred - y_test))
+
+ss_res <- sum((y_test - pred)^2)
+ss_tot <- sum((y_test - mean(y_test))^2)
+
+r2 <- 1 - ss_res/ss_tot
+
+
+rmse
+mae
+r2
+```
+
+```{r}
+pred_train <- knn.reg(
+  train = X_train,
+  test  = X_train,
+  y     = y_train,
+  k     = k
+)$pred
+pred_test <- pred
+
+df_plot <- rbind(
+  data.frame(
+    set = "train",
+    actual = y_train,
+    pred = pred_train
+  ),
+  data.frame(
+    set = "test",
+    actual = y_test,
+    pred = pred_test
+  )
+)
+
+ggplot(df_plot, aes(x = actual, y = pred, color = set, shape = set)) +
+  geom_point(alpha = 0.2, size = 2) +
+  scale_color_manual(values = c("train" = "blue", "test" = "green4")) +
+  scale_shape_manual(values = c("train" = 15, "test" = 17)) + 
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(
+    title = "Predicted vs Actual (train & test)",
+    x = "Actual",
+    y = "Predicted"
+  ) +
+  theme_minimal()
+```
+
+### Combined approach
+
+1)  regression for obserwations with `clicks per view > 0`
+
+```{r}
+train_pos <- train %>% filter(log_clicks_per_view > 0)
+test_pos  <- test  %>% filter(log_clicks_per_view > 0)
+
+y_train <- train_pos$log_clicks_per_view
+y_test  <- test_pos$log_clicks_per_view
+
+X_train <- train_pos %>% select(-log_clicks_per_view)
+X_test  <- test_pos  %>% select(-log_clicks_per_view)
+
+k <- 25
+
+pred <- knn.reg(
+  train = X_train,
+  test  = X_test,
+  y     = y_train,
+  k     = k
+)$pred
+
+rmse <- sqrt(mean((pred - y_test)^2))
+mae  <- mean(abs(pred - y_test))
+
+ss_res <- sum((y_test - pred)^2)
+ss_tot <- sum((y_test - mean(y_test))^2)
+
+r2 <- 1 - ss_res/ss_tot
+rmse
+mae
+r2
+```
+
+2)  Two-step KNN:
+
+-   klasyfikacja, czy click per view jest dodatni
+
+-   regresja dla wierszy sklasyfikowanych jako dodatnie
+
+```{r}
+y_train <- train$log_clicks_per_view
+y_test  <- test$log_clicks_per_view
+
+X_train <- train %>% select(-log_clicks_per_view)
+X_test  <- test  %>% select(-log_clicks_per_view)
+
+
+y_train_bin <- ifelse(y_train > 0, 1, 0)
+y_test_bin  <- ifelse(y_test  > 0, 1, 0)
+
+k_class <- 11   
+k_reg   <- 25   
+
+
+pred_class <- knn(
+  train = X_train,
+  test  = X_test,
+  cl    = y_train_bin,
+  k     = k_class
+)
+
+
+pred_reg <- rep(0, length(pred_class))   
+
+idx_pos <- which(pred_class == 1) 
+
+if (length(idx_pos) > 0) {
+  pred_reg[idx_pos] <- knn.reg(
+    train = X_train,
+    test  = X_test[idx_pos, ],
+    y     = y_train,
+    k     = k_reg
+  )$pred
+}
+
+final_pred <- pred_reg
+
+rmse <- sqrt(mean((final_pred - y_test)^2))
+mae  <- mean(abs(final_pred - y_test))
+
+ss_res <- sum((y_test - final_pred)^2)
+ss_tot <- sum((y_test - mean(y_test))^2)
+r2 <- 1 - ss_res/ss_tot
+
+rmse
+mae
+r2
+```
+
+Wizualizacja
+
+```{r}
+pred_class_train <- knn(
+  train = X_train,
+  test  = X_train,
+  cl    = ifelse(y_train > 0, 1, 0),
+  k     = k_class
+)
+
+final_pred_train <- rep(0, length(pred_class_train))
+idx_pos_train <- which(pred_class_train == 1)
+
+if (length(idx_pos_train) > 0) {
+  final_pred_train[idx_pos_train] <- knn.reg(
+    train = X_train,
+    test  = X_train[idx_pos_train, ],
+    y     = y_train,
+    k     = k_reg
+  )$pred
+}
+
+pred_class_test <- knn(
+  train = X_train,
+  test  = X_test,
+  cl    = ifelse(y_train > 0, 1, 0),
+  k     = k_class
+)
+
+
+final_pred_test <- rep(0, length(pred_class_test))
+idx_pos_test <- which(pred_class_test == 1)
+
+if (length(idx_pos_test) > 0) {
+  final_pred_test[idx_pos_test] <- knn.reg(
+    train = X_train,
+    test  = X_test[idx_pos_test, ],
+    y     = y_train,
+    k     = k_reg
+  )$pred
+}
+```
+
+```{r}
+df_plot <- rbind(
+  data.frame(
+    set = "train",
+    actual = y_train,
+    pred = final_pred_train
+  ),
+  data.frame(
+    set = "test",
+    actual = y_test,
+    pred = final_pred_test
+  )
+)
+
+ggplot(df_plot, aes(x = actual, y = pred, color = set, shape = set)) +
+  geom_point(alpha = 0.2, size = 2) +
+  scale_color_manual(values = c("train" = "blue", "test" = "green4")) +
+  scale_shape_manual(values = c("train" = 15, "test" = 17)) + 
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(
+    title = "Predicted vs Actual (train & test) — 2-step kNN model",
+    x = "Actual",
+    y = "Predicted"
+  ) +
+  theme_minimal()
+```
+
+Wniosek: proste podejście dawało bardzo podobne - jeśli nie lepsze - rezultaty.
