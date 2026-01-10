@@ -1,0 +1,529 @@
+---
+title: "PIWDWR2025_MICHAŁ_STADNIK_projekt"
+author: "Michał Stadnik (416012)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: united
+    highlight: tango
+  pdf_document:
+    toc: true
+    toc_depth: '3'
+---
+
+```{css, echo=FALSE}
+body{
+  font-family: Avenir, Helvetica, "sans serif"
+}
+h1,h2,h3,h4,h5,h6{
+  font-family: Avenir, Helvetica, "sans serif"
+}
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Ładowanie danych
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(C50)
+library(gmodels)
+library(rpart)
+library(rpart.plot)
+library(Cubist)
+
+path = "D:\\Programowanie\\R\\WdAD\\WdAD_projekt_wikipedia\\data\\wikipedia.csv"
+df = read.csv(path,row.names = "X") #In the "X" column are indexes
+
+str(df)
+```
+
+# Przygotowanie danych
+
+Po pierwsze, zauważmy, że kolumny True/False są typu tekstowego, podobnie jak kolumna `type`. Chcemy zamienić te kolumny na typ factor. Po drugie, chcemy pozbyć się wszystkich zmiennych zawierających tekst (np tytuł, zawartość artykułu itd), gdyż do drzew te zmienne są niepotrzebne. Po trzecie chcemy usunąć również kolumny wprost używane do obliczania `clicks_per_view` (tj. `clicks_out`, `mo_page_views`). Ze względu na to, że chcemy używać tylko wiedzy o artykułach (bez wiedzy o statystykach wizyt) usunę także `clicks_in`.
+
+```{r}
+table(df$type)
+```
+
+Zauważmy, że kategorie mieszane są rzadkie. Może to powodować problemy przy podziale na zbiór treningowy i testowy, dlatego usunę te kategorie.
+
+```{r}
+titles = df["title"]
+
+columns_to_deleting <- c("mo_page_views", "clicks_in", "clicks_out")
+columns_to_deleting <- c(columns_to_deleting, paste0("log_", columns_to_deleting), paste0("is_", columns_to_deleting, "_zero"))
+
+df <- df |> 
+  select(-title, -summary, -categories, -categories_string, -image_titles, -image_titles_string, -creation_date, -columns_to_deleting) |> 
+  filter(
+    !type %in% c("history, mathematics", "history, physics", "mathematics, physics")
+  ) |> 
+  mutate(
+    across(starts_with("is_"), as.factor),
+    across(starts_with("cat_"), as.factor),
+    type = as.factor(type)
+  )
+```
+
+Chcemy mieć dwie wersje datasetu: jedną z nieprzekształconymi kolumnami, i drugą ze zlogarytmowanymi (ale zachowamy sobie logarytm zmiennej objaśnianej)
+
+```{r}
+df_lin <- df |> 
+  select(log_clicks_per_view, !starts_with("log_"))
+
+logharitmed_cols <- sub("log_", "", names(df)[startsWith(names(df), "log_")])
+logharitmed_cols <- logharitmed_cols[logharitmed_cols != "clicks_per_view"]
+
+df_log <- df |> 
+  select(-any_of(logharitmed_cols))
+```
+
+summary(df_lin)
+
+summary(df_log)
+
+# Drzewa losowe
+
+Użyję drzew losowych do predykcji, czy stosunek kliknięć w linki na stronie do wyświetleń wynosi 0, czy jest większy od zera. Mówi to nam o tym, czy dany artykuł miał jakiekolwiek zainteresowanie (bowiem `clicks_per_view` przyjmuje wartość 0, gdy liczba wyświetleń wynosi 0) i czy jakkolwiek zaangażował czytelnika (czyli czy było choć jedno kliknięcie w link na stronie).
+
+## Podział na zbiór treningowy i testowy
+
+```{r}
+RNGversion("3.5.2"); set.seed(2137)
+
+test_sample <- sample(nrow(df), 0.2*nrow(df)) #I decided to 80:20 split
+str(test_sample)
+```
+
+## Usunięcie niepotrzebnych kolumn
+
+By uniknąć wycieku danych należy usunąć kolumny z `clicks_per_view`
+
+```{r}
+df_lin_class <- df_lin |> 
+  select(-clicks_per_view, -log_clicks_per_view)
+
+df_log_class <- df_log |> 
+  select(-clicks_per_view, -log_clicks_per_view)
+```
+
+## Funkcja generująca drzewo losowe
+
+Aby uniknąć duplikacji kodu, cały kod generujący drzewo losowe i robiący predykcję zamknąłem w funkcji
+
+```{r}
+make_tree_class <- function(df, dep_var="is_clicks_per_view_zero", trials=1, writeTXT=FALSE, error_costs=NULL){
+  df_train <- df[-test_sample,]
+  df_test <- df[test_sample,]
+  
+  covariates <- names(df)[(names(df) != dep_var)]
+  
+  print("Proportions across train and test sets:")
+  print("Original-----------------------------")
+  print(prop.table(table(df[[dep_var]])))
+  print("Train-----------------------------")
+  print(prop.table(table(df_train[[dep_var]])))
+  print("Test-----------------------------")
+  print(prop.table(table(df_test[[dep_var]])))
+  
+  model <- C5.0(df_train[covariates], df_train[[dep_var]], trials=trials, costs=error_costs)
+  
+  if(writeTXT){
+    txt <- capture.output(summary(model))
+    tmp <- tempfile(fileext = ".txt")
+    writeLines(txt, tmp)
+    shell.exec(tmp) 
+  } else {
+    print("Summary of the model----------------")
+    print(summary(model))
+  }
+  
+  prediction <- predict(model, df_test[covariates])
+  
+  print("CrossTable--------------------------")
+  CrossTable(df_test[[dep_var]], prediction, prop.chisq = FALSE, prop.r = FALSE, prop.c = FALSE, prop.t = TRUE)
+  
+  # PODSUMOWANIE
+  
+  simple_cross_table <- table(Actual = df_test[[dep_var]], Predict = prediction)
+  
+  accuracy <- sum(diag(simple_cross_table)) / sum(simple_cross_table)
+  
+  summary_row <- data.frame(
+    Trials = trials,
+    Accuracy = round(accuracy, 4),
+    
+    True_Negative = simple_cross_table["False", "False"],
+    True_Positive = simple_cross_table["True", "True"],
+
+    False_Negative = simple_cross_table["False", "True"],
+    False_Positive = simple_cross_table["True", "False"]
+  )
+  
+  print("--- PODSUMOWANIE MODELU ---")
+  print(summary_row)
+  return(summary_row)
+}
+```
+
+## Zwykłe drzewo losowe
+
+Dla danych liniowych (tj. kolumny liczbowe bez logarytmowania)
+
+```{r}
+simple_lin_tree <- make_tree_class(df_lin_class)
+```
+
+Dla danych ze zlogarytmowanymi kolumnami liczbowymi
+
+```{r}
+simple_log_tree <- make_tree_class(df_log_class)
+```
+
+Porównajmy obok siebie obydwa modele
+
+```{r}
+print(simple_lin_tree)
+print(simple_log_tree)
+```
+
+Jak widać model ze zlogarytmowanymi kolumnami miał minimalnie lepszą skuteczność. Miał on większą skłonność do przypisywania False (czyli artykuł ma `clicks_per_view`\>0). Niemniej różnice są minimalne, czego można się było spodziewać (w końcu dla drzew losowych liczy się jedynie ustawienie odpowiednich podziałów, to czy podział przebiega dla np 100, czy ln(100) nie powinno mieć znaczenia) Analizując kształt drzewa losowego, oraz tabelę ważności poszczególnych zmiennych można wywnioskować, że duże znaczenie ma liczba edytorów. Jeśli jest ona spora, to model ma dużą skłonność do przypisywania False, co można interpretować, że artykuły z dużą liczbą edytorów są dobrze dopracowane. Również duże znaczenie ma wysoka liczba edycji, kategorii oraz linków na stronie, które są kolejnymi wskaźnikami jak bardzo artykuł jest dopracowany. Należy również zauważyć wpływ obecności niektórych kategorii, takich jak "mathematical_logic", "living_people" czy "mathematics_related_lists". Osiągnięta trafność na poziomie 78% jest całkiem niezła, chociaż mogłaby być lepsza. Warto zauważyć, że podobna trafność jest w zbiorze treningowym, więc jest to oznaka, że drzewo nie jest przeuczone. Spróbujmy zatem ulepszyć trafność używając algorytmu ADABoosting
+
+## ADA Boosting
+
+Zacznijmy od liczby drzew = 10
+
+Model z liniowymi zmiennymi:
+
+```{r}
+lin_tree_10 <- make_tree_class(df_lin_class, trials = 10)
+```
+
+oraz ze zlogarytmowanymi
+
+```{r}
+log_tree_10 <- make_tree_class(df_log_class, trials = 10)
+```
+
+Jak widać użycie algorytmu ADABoost nie polepszyło skuteczności, ale też jej nie pogorszyło. Wygląda na to, że dane są na tyle zaszumione, że używanie kilku drzew nie pomaga. Ale może powodem jest ustawiony parametr "trials" na zbyt dużym poziomie. Spróbujmy go zmniejszyć.
+
+```{r}
+lin_tree_5 <- make_tree_class(df_lin_class, trials = 5)
+lin_tree_3 <- make_tree_class(df_lin_class, trials = 3)
+
+log_tree_5 <- make_tree_class(df_log_class, trials = 5)
+log_tree_3 <- make_tree_class(df_log_class, trials = 3)
+```
+
+Zbierzmy w jednym miejscu podsumowania wszystkich modeli: Modele bez logartymowania
+
+```{r}
+print(simple_lin_tree)
+print(lin_tree_10)
+print(lin_tree_5)
+print(lin_tree_3)
+```
+
+Jak widzimy ADA Boosting nie pomaga w tym przypadku ani nie pogarsza sytuacji. Jednakże na mocy brzytwy Ockhama za najlepszy wybór należy uznać zwykłe drzewo losowe. Wygląda na to, że proste drzewo losowe wystarczająco dobrze tłumaczy dane, a kolejne iteracje w algorytmie uczą się jedynie na szumie. Modele zlogarytmowane
+
+```{r}
+print(simple_log_tree)
+print(log_tree_10)
+print(log_tree_5)
+print(log_tree_3)
+```
+
+Również i tutaj nie widzimy znaczącej poprawy, zarówno względem wersji "liniowej", jak i po użyciu ADABoosting. Model z trial=10 osiąga najwyższy wynik, ale zysk informacyjny jest tutaj niewielki. Chociaż trzeba zauważyć, że dla danych zlogarytmowanych najwyższa skuteczność jest dla trials=10, w przeciwieństwie do danych liniowych, gdzie miało to miejsce dla trials=3 (i był to jedyny wynik który przebił skuteczność pojedyńczego drzewa). Tutaj z kolei niemal wszystkie przypadki mają minimalnie większą skuteczność niż model bazowy. Jednak wciąż, różnice są symboliczne i wniosek pozostaje ten sam: pojedyńcze drzewo jest lepsze, bo jest prostsze, a osiąga ten sam rezultat. Podsumowując tę część projektu: najlepsze okazały się najprostsze przypadki. A ponieważ model bez logarytmowania jest lepiej interpretowalny, to ostatecznie pozostałbym przy pojedyńczym drzewie losowym bez logarytmowania zmiennych ilościowych.
+
+## Ważenie
+
+W tym przypadku błędy są raczej warte tyle samo. Co więcej wszystkie modele w miarę równomiernie rozkładają te błędy. Powiedzmy jednak, że chcemy napisać algorytm, który będzie wyświetlał użytkownikom potencjalnie interesujące artykuły. Chcemy zatem zminimalizować sytuację, w której jako ciekawy artykuł pokazujemy nieanagażujący. Natomiast dopuszczamy, że ciekawe artykuły nie zostaną pokazane. W takim razie Chcemy dać większą karę za False Negative. Ponieważ nie jest to bardzo krytyczne zastosowanie, to wybierzemy niską różnicę między kosztami, powiedzmy, że FN będzie 2 razy kosztowniejszy od FP.
+
+```{r}
+matrix_dimensions <- list(c("False", "True"), c("False", "True"))
+names(matrix_dimensions) <- c("predicted", "actual")
+
+error_cost <- matrix(c(0,1,2,0), nrow = 2, dimnames = matrix_dimensions)
+```
+
+Ze względu, że zwykłe drzewo osiągnęło najlepszy rezultat, to użyję tylko jego
+
+```{r}
+make_tree_class(df_lin_class, error_costs = error_cost)
+```
+
+Jak widać po tabeli krzyżowej: kosztem zwiększenia stopnia odrzucania ciekawych artykułów, udało się zmniejszyć liczbę artykułów nieangażujących klasyfikowanych jako angażujące.
+
+# Drzewa regresji
+
+Przejdźmy do zadania regrsji. Będziemy chcieli estymować wartość współczynnika `clicks_per_view` (liczba kliknięć w dowolny link na stronie/liczbę wyświetleń). Zauważmy najpierw, że w tej kolumnie mamy dużo zer
+
+```{r}
+summary(df_lin$clicks_per_view)
+table(df_lin$is_clicks_per_view_zero)
+```
+
+Prawie połowa danych to zera. Taka ilość zer może zaburzyć działanie algorytmu regresyjnego. Idea jest następująca: tworzymy algorytm dwuetapowy, najpierw klasyfikujemy czy artykuł może być ciekawy (co już zrobiliśmy wcześniej), zaś dla tych artykuły, które zostały sklasyfikowane jako angażujące, próbujemy przewidywać ile ten stosunek będzie wynosił. W tym celu usuńmy najpierw wszystkie artykuły z zerowym `clicks_per_view`. Usuńmy także kolumnę `is_clicks_per_view_zero`, gdyż tutaj będzie ona bezużyteczna
+
+```{r}
+df_lin_reg <- df_lin |> 
+  filter(
+    is_clicks_per_view_zero == "False"
+  ) |> 
+  select(-is_clicks_per_view_zero)
+
+df_log_reg <- df_log |> 
+  filter(
+    is_clicks_per_view_zero == "False"
+  ) |> 
+  select(-is_clicks_per_view_zero)
+```
+
+Ponieważ zmniejszyliśmy liczbę wierszy musimy wygenerować nowy podział na zbiory treningowe i testowe
+
+```{r}
+RNGversion("3.5.2"); set.seed(2137)
+
+test_sample <- sample(nrow(df_lin_reg), 0.2*nrow(df_lin_reg)) #I decided to 80:20 split
+str(test_sample)
+```
+
+Sprawdźmy jeszcze rozkłady oczyszczonych danych:
+
+```{r}
+hist(df_lin_reg$clicks_per_view)
+hist(df_lin_reg$log_clicks_per_view)
+```
+
+Niestety, nawet zlogarytmowanie danych nie poprawia mocnej skośności `clicks_per_view`. Może być to problematyczne dla drzew regresji. Zdefiniujmy funkcję do obliczania MAE (średniego błędu bezwzględnego)
+
+```{r}
+MAE <- function(actual, predicted){
+  mean(abs(actual-predicted))
+}
+```
+
+Podobnie jak wcześniej napiszę wszystko w funkcji
+
+```{r}
+make_tree_reg <- function(df, dep_var="clicks_per_view", writeTXT=FALSE){
+  df_train <- df[-test_sample,]
+  df_test <- df[test_sample,]
+  
+  print("Summaries across train and test sets:\n")
+  print("Original-----------------------------\n")
+  print(summary(df[[dep_var]]))
+  print("Train-----------------------------\n")
+  print(summary(df_train[[dep_var]]))
+  print("Test-----------------------------\n")
+  print(summary(df_test[[dep_var]]))
+  
+  formula <- as.formula(paste(dep_var, "~ ."))
+  
+  model <- rpart(formula, data = df)
+  
+  if(writeTXT){
+    txt <- capture.output(summary(model))
+    tmp <- tempfile(fileext = ".txt")
+    writeLines(txt, tmp)
+    shell.exec(tmp) 
+  } else {
+    print("Summary of the model----------------")
+    print(summary(model))
+  }
+  
+  prediction <- predict(model, df_test)
+  
+  print("Predicted Summaries--------------------------")
+  print("Predicted-----------------------------")
+  print(summary(prediction))
+  print("Test-----------------------------")
+  print(summary(df_test[[dep_var]]))
+  print("KORELACJA: ")
+  print(cor(prediction, df_test[[dep_var]]))
+  print("MAE: ")
+  MAE <- MAE(df_test[[dep_var]], prediction)
+  print(MAE)
+  print("MAE of trivial classifier: ")
+  print(MAE(df[[dep_var]], mean(df[[dep_var]])))
+
+  return(list(model = model, prediction = prediction, MAE = MAE, test_dep_var = df_test[[dep_var]]))
+}
+```
+
+Ponieważ przewidujemy zmienną ciągłą, to mamy 4 możliwości: możemy użyć danych liniowych do przewidzenia liniowej zmiennej objaśnianej, do przewidzenia zlogarytmowanej zmiennej docelowej, oraz tak samo w wersji danych zlogarytmowanych. 
+
+## Dane Liniowe & Liniowa zmienna objaśniana
+
+```{r}
+#wybór odpowiednich zmiennych do ramki danych
+df_lin_reg_lin <- df_lin_reg |> 
+  select(-log_clicks_per_view)
+
+lin_reg_lin <- make_tree_reg(df_lin_reg_lin)
+rpart.plot(lin_reg_lin$model, digits = 4)
+plot(lin_reg_lin$prediction, lin_reg_lin$test_dep_var)
+```
+
+Model wygenerował małą liczbę liści. MAE na poziomie 0,09, uwzględniając fakt iż wartości mogą być z przedziału 0-1 jest dość sporą wartością (średnio model myli się o 9%). Co gorsze, wynik ten jest tylko minimalnie lepszy od trywialnego klasyfikatora, przypisującego zawsze średnią. Również korelacja jest mała. Patrząc na rozkład wartości, widzimy, że maksymalna wartość wynosi ledwie 0.25, co najprawdopodobniej wynika z dużej skośności tej zmiennej. Co wciąż model ten oceniam nisko. 
+
+## Dane Liniowe & Zlogarytmowana zmienna objaśniana
+
+```{r}
+df_lin_reg_log <- df_lin_reg |> 
+  select(-clicks_per_view)
+
+lin_reg_log <- make_tree_reg(df_lin_reg_log, dep_var = "log_clicks_per_view")
+rpart.plot(lin_reg_log$model, digits = 4)
+plot(lin_reg_log$prediction, lin_reg_log$test_dep_var)
+```
+
+Ten model poradził sobie minimalnie lepiej niż poprzedni. Przede wszystkim wygenerował nieco więcej liści, co wciąż ich ilość jest niewielka. Widzimy również nieco większą wartość korelacji. Należy pamiętać, że aby porównać ze sobą modele należy odwrócić logarytm, tj zastosować na wynikach funkcję exp(x)-1. Obliczmy więc MAE oraz MAE trywialnego przypadku, sprawdźmy też jak wygląda rozstęp danych.
+
+```{r}
+print(paste0("MAE: ", exp(lin_reg_log$MAE)-1))
+print(paste0("Trywialne MAE: ", exp(0.08052277)-1))
+print(paste0("Min przewidziane: ", exp(0.1023)-1, " | Min rzeczywiste: ", exp(0.004701)-1))
+print(paste0("Max przewidziane: ", exp(0.2132)-1, " | Max rzeczywiste: ", exp(0.691591)-1))
+```
+
+Widzimy, że ten model radzi sobie nieco lepiej, bo średni błąd jest na poziomie 7.8%. Wciąż jest to wynik tylko o 0.5% lepszy od trywialnego klasyfikatora. Co do zakresu, to nieco bardziej pokrywa dolne wartości, ale o mniej więcej tyle samo gorzej pokrywane są górne wartości. Podsumowując, wciąż ten model jest słabej jakości. 
+
+## Dane Zlogarytmowane & Liniowa zmienna objaśniana
+
+```{r}
+df_log_reg_lin <- df_log_reg |> 
+  select(-log_clicks_per_view)
+
+log_reg_lin <- make_tree_reg(df_log_reg_lin)
+rpart.plot(log_reg_lin$model, digits = 4)
+plot(log_reg_lin$prediction, log_reg_lin$test_dep_var)
+```
+
+W zasadzie zlogarytmowanie zmiennych pomocniczych nic tutaj nie zmieniło. Wyniki są niemal identyczne jak w wersji liniowej.
+
+## Dane Zlogarytmowane & Zlogarytmowana zmienna objaśniana
+
+```{r}
+df_log_reg_log <- df_log_reg |> 
+  select(-clicks_per_view)
+
+log_reg_log <- make_tree_reg(df_log_reg_log, dep_var = "log_clicks_per_view")
+rpart.plot(log_reg_log$model, digits = 4)
+plot(log_reg_log$prediction, log_reg_log$test_dep_var)
+```
+
+Również i tutaj widzimy te same rezultaty co w wersji z liniowymi danymi.
+
+Podsumowując drzewa regresyjne: nie nadają się one do tych danych (co jest spowodowane dużą skośnością zmiennej objaśnianej). Być może gdyby były one bardziej rozbudowane, rezutlaty byłyby lepsze.
+
+# Drzewa modeli
+
+Funkcja generująca drzewo i sprawdzająca model
+
+```{r}
+make_tree_mod <- function(df, dep_var="clicks_per_view", writeTXT=FALSE){
+  df_train <- df[-test_sample,]
+  df_test <- df[test_sample,]
+  
+  #covariates <- names(df)[(names(df) != dep_var)]
+  
+  print("Summaries across train and test sets:\n")
+  print("Original-----------------------------\n")
+  print(summary(df[[dep_var]]))
+  print("Train-----------------------------\n")
+  print(summary(df_train[[dep_var]]))
+  print("Test-----------------------------\n")
+  print(summary(df_test[[dep_var]]))
+  
+  covariates <- names(df)[(names(df) != dep_var)]
+  
+  model <- cubist(df_train[covariates], df_train[[dep_var]])
+  
+  if(writeTXT){
+    txt <- capture.output(summary(model))
+    tmp <- tempfile(fileext = ".txt")
+    writeLines(txt, tmp)
+    shell.exec(tmp) 
+  } else {
+    print("Summary of the model----------------")
+    print(summary(model))
+  }
+  
+  prediction <- predict(model, df_test)
+  
+  print("Predicted Summaries--------------------------")
+  print("Predicted-----------------------------")
+  print(summary(prediction))
+  print("Test-----------------------------")
+  print(summary(df_test[[dep_var]]))
+  print("KORELACJA: ")
+  print(cor(prediction, df_test[[dep_var]]))
+  print("MAE: ")
+  MAE <- MAE(df_test[[dep_var]], prediction)
+  print(MAE)
+  print("MAE of trivial classifier: ")
+  print(MAE(df[[dep_var]], mean(df[[dep_var]])))
+
+  return(list(model = model, prediction = prediction, MAE = MAE, test_dep_var = df_test[[dep_var]]))
+}
+```
+
+Podobnie jak dla drzewa regresji sprawdzimy wszystkie kombinacje wersji logarytmowanych i nielogarytmowanych
+
+## Dane Liniowe & Liniowa zmienna objaśniana
+
+```{r}
+lin_mod_lin <- make_tree_mod(df_lin_reg_lin)
+plot(lin_mod_lin$prediction, lin_mod_lin$test_dep_var)
+hist(lin_mod_lin$prediction)
+```
+
+Jak można zobaczyć, drzewa modeli dają dużo lepsze rezultaty już na dzień dobry. Przede wszystkim przedział wartości które może zwrócić już dużo bardziej odpowiada rzeczywistości. Wciąż najbardziej skrajne wartości będą pomijane, ale pokrywanie 60% rzeczywistego zbioru jest o wiele lepsze niż ledwie 12%. Co więcej histogram przewidzianych wartości przypomina histogram rzeczywistych danych. Wartość MAE spadła, i widać już różnicę między trywialnym klasyfikatorem, a zbudowanym drzewem. Widać też wyższy współczynnik korelacji. Wykres punktowy zależności między zmiennymi przewidzianymi, a rzeczywistymi pokazuje pewną tendecję modelu: ma on skłonność przypisywać artykułom ze stosunkową wysoką wartością przewidywanego współczynnika, dużo niższe wartości, zresztą tak samo dzieje się z artykułami o bardzo niskim współczynniku.
+
+## Dane Liniowe & Zlogarytmowana zmienna objaśniana
+
+```{r}
+lin_mod_log <- make_tree_mod(df_lin_reg_log, dep_var = "log_clicks_per_view")
+plot(lin_mod_log$prediction, lin_mod_log$test_dep_var)
+hist(lin_mod_log$prediction)
+```
+
+Przed wyciągnięciem wniosków zastosujmy na wynikach funkcję exp(x)-1.
+
+```{r}
+print(paste0("MAE: ", exp(lin_mod_log$MAE)-1))
+print(paste0("Trywialne MAE: ", exp(0.08052277)-1))
+print(paste0("Min przewidziane: ", exp(0.01326)-1, " | Min rzeczywiste: ", exp(0.004701)-1))
+print(paste0("Max przewidziane: ", exp(0.55549 )-1, " | Max rzeczywiste: ", exp(0.691591)-1))
+```
+
+Uzyskaliśmy jeszcze niższe MAE i podobnie jak wcześniej, jest odróżnialnie niższe od trywialnego MAE. Również zakres predykcji się poprawił: z prawej strony mamy wzrost o 14 p.p., zaś z lewej zauważyć trzeba, że model nie przewidział zerowych wartości, co jest jak najbardziej prawidłowym zachowaniem (w końcu model ma przewidywać wartości niezerowych współczynników, przewidzenie 0 należy uznać za błąd). Należy też zwrócić uwagę na korelację osiągającą już 0.39. Obserwacje dotyczące histogramu przewidzianych wartości, oraz rozmieszczenia predykcji wzdlędem rzeczywistych wartości pozostają jednak takie same.
+
+## Dane Zlogarytmowane & Liniowa zmienna objaśniana
+
+```{r}
+log_mod_lin <- make_tree_mod(df_log_reg_lin)
+plot(log_mod_lin$prediction, log_mod_lin$test_dep_var)
+hist(log_mod_lin$prediction)
+```
+
+Zlogarytmowanie danych wejściowych nie polepszyło znacząco modelu. MAE utrzymuje się na tym samym poziomie. Niemniej, współczynnik korelacji wzrósł już do 0.4. Zakres predykcji i kształty wykresów są zbliżone do przypadku bez logarytmowania, chociaż należy zwrócić uwagę, że ten model przewiduje zerowe wartości, w przeciwieństwie do modelu bez logarytmowania.
+
+## Dane Zlogarytmowane & Zlogarytmowana zmienna objaśniana
+
+```{r}
+log_mod_log <- make_tree_mod(df_log_reg_log, dep_var = "log_clicks_per_view")
+plot(log_mod_log$prediction, log_mod_log$test_dep_var)
+hist(log_mod_log$prediction)
+```
+
+Również i tu nie widać poprawy, względem modelu z liniowymi zmiennymi wejściowymi, co gorsza, przedział predykcji minimalnie węższy. Należy zauważyć, że współczynnik korelacji wzrósł o 0.01 i osiąga niemal wartość 0.4 (zbliża się do modelu ze zlogarytmowanym wejściem i liniową zmienną objaśnianą. Zatem zlogarytmowanie zmiennych wejściowych pogorszyło nieco jakość tego drzewa.
+
+Podsumowując, widać, że logarytmowanie pomaga osiągnąć lepszy model, jednakże w zależności od przyjętej miary różnić się będą wnioski co do tego które drzewo jest najlepsze. Pod względem MAE wygrywają drzewa ze zlogarytmowaną zmienną objaśnianą. Pod względem współczynnika korelacji: minimalnie wygrywa model ze zlogarytmowanym wejściem i liniowym wyjściem, natomiast pod kątem rozpiętości przedziału predykcji najlepszy jest model z liniowym wejściem i zlogarytmowanym wyjściem. Świadczyć to może o zależności wykładniczej między danymi liczbowymi a `clicks_per_view`. W tym przypadku drzewa modeli poradziły sobie znacząco lepiej niż drzewa regresji.
