@@ -1,0 +1,265 @@
+---
+title: "klasteryzacja_final"
+author: "r klasteryzaqcja"
+date: "2026-01-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tm) # przetwarzanie tekstu
+library(SnowballC) # stemming słów
+library(Matrix) # macierze rzadkie
+library(dplyr) # manipulacja danymi
+library(ClusterR) # klasteryzacja
+library(plotly) # wizualizacja
+```
+
+```{r}
+data <- read.csv('wikipedia.csv', row.names = "X") # wczytanie pliku CSV z danymi
+head(data) # podgląd pierwszych wierszy
+str(data) # struktura danych
+colnames(data) # nazwy kolumn
+dim(data) # wymiary danych
+head(data$summary)
+```
+
+```{r}
+set.seed(123)
+x <- sample(nrow(data), 6000) # losowa próbka 6000 wierszy, niestety redukacja było potrzebna z powodu niewystarczającej ilości RAM
+data <- data[x, ]
+nrow(data) # sprawdzenie liczby obserwacji
+```
+
+```{r}
+corpus <- VCorpus(VectorSource(data$summary)) %>%
+tm_map(content_transformer(tolower)) %>% # małe litery
+tm_map(removeNumbers) %>% # usunięcie cyfr
+tm_map(removePunctuation) %>% # usunięcie interpunkcji
+tm_map(removeWords, stopwords()) %>% # usunięcie stopwords
+tm_map(content_transformer(function(x){
+x <- gsub('\n', ' ', x) # usunięcie znaków nowej linii
+x <- gsub('\\n', ' ', x)
+x
+})) %>%
+tm_map(stemDocument) %>% # stemming
+tm_map(stripWhitespace) # usunięcie nadmiarowych spacji
+
+dtm <- DocumentTermMatrix(corpus) # macierz dokument-słowo
+rm(corpus) # zwalnianie pamięci
+
+dtm_sparse <- sparseMatrix(
+i = dtm$i,
+j = dtm$j,
+x = as.numeric(dtm$v > 0),
+dims = c(dtm$nrow, dtm$ncol),
+dimnames = dimnames(dtm)
+)
+rm(dtm)
+
+word_count <- colSums(dtm_sparse)
+freq_words <- names(word_count[word_count >= 5])
+dtm_sparse <- dtm_sparse[, freq_words]
+```
+
+```{r}
+
+corpus_title <- VCorpus(VectorSource(data$title)) %>%
+tm_map(stemDocument) %>%
+tm_map(stripWhitespace)
+
+dtm_title <- DocumentTermMatrix(corpus_title)
+rm(corpus_title)
+
+dtm_title_sparse <- sparseMatrix(
+i = dtm_title$i,
+j = dtm_title$j,
+x = as.numeric(dtm_title$v > 0),
+dims = c(dtm_title$nrow, dtm_title$ncol),
+dimnames = dimnames(dtm_title)
+)
+rm(dtm_title)
+
+colnames(dtm_title_sparse) <- paste("title", colnames(dtm_title_sparse), sep='_')
+
+dtm_combined <- cbind(dtm_sparse, dtm_title_sparse)
+rm(dtm_sparse, dtm_title_sparse)
+```
+
+```{r}
+
+# na początekwybierzemy taką liczbę klastrów, gdyż tyle mamy naturalnie kategorii w danych
+k <- 6
+set.seed(123)
+km_result <- kmeans(dtm_combined, centers = k)
+
+km_result$size # liczność klastrów
+km_result$tot.withinss # suma wariancji wewnątrzklastrowych
+```
+
+
+```{r}
+wiki_stopwords <- c(
+"state","found","call","end","mani","world","continu",
+"howev","make","given","known","name","term","often",
+"common","gener","well","later","earli",
+"can","may","two","three","first","second","one",
+"differ","relat","follow","form","case",
+"refer","also","see","use","includ","exampl","general",
+"therefor","thus",
+"publish","public","book","studi","work","author",
+"research","paper","journal"
+)
+
+dtm_filtered <- dtm_combined[, !colnames(dtm_combined) %in% wiki_stopwords]
+```
+
+```{r}
+km_result_filtered <- kmeans(dtm_filtered, centers = k)
+km_result_filtered$size
+km_result_filtered$tot.withinss
+```
+
+
+```{r}
+# tutaj spróbujemy puścić klasteryzację dla innych wartości parametru k 2,3,4,5, 7, 8, 9 
+
+
+km_2 <- kmeans(dtm_filtered, centers = 2)
+
+wcss_2 <- km_2$tot.withinss
+
+set.seed(123)
+km_3 <- kmeans(dtm_filtered, centers = 3)
+
+wcss_3 <- km_3$tot.withinss
+
+set.seed(123)
+km_4 <- kmeans(dtm_filtered, centers = 4)
+
+wcss_4 <- km_4$tot.withinss
+
+set.seed(123)
+km_5 <- kmeans(dtm_filtered, centers = 5)
+
+wcss_5 <- km_5$tot.withinss
+
+# dla lepszego efektu spróbujemy puścić jeszcze dla k = 7, 8, 9 jeżeli się uda
+
+set.seed(123)
+km_7 <- kmeans(dtm_filtered, centers = 7)
+
+wcss_7 <- km_7$tot.withinss
+
+set.seed(123)
+km_8 <- kmeans(dtm_filtered, centers = 8)
+
+wcss_8 <- km_8$tot.withinss
+
+set.seed(123)
+km_9 <- kmeans(dtm_filtered, centers = 9)
+
+wcss_9 <- km_9$tot.withinss
+```
+
+```{r}
+# wykres homogeniczność wewnątrz klastrów, na jego podstawie spróbujemy znaleźć punkt łokcia i dobrać odpowiednią liczbę klastrów
+
+results_manual <- data.frame(
+  k = c(2, 3, 4, 5, 6, 7, 8, 9),
+  WCSS = c(wcss_2, wcss_3, wcss_4, wcss_5, wcss_1, wcss_7, wcss_8, wcss_9)
+)
+
+results_manual
+p_wcss <- plot_ly(
+  results_manual,
+  x = ~k,
+  y = ~WCSS,
+  type = "scatter",
+  mode = "lines+markers"
+) %>%
+  layout(
+    title = "Elbow method – homogeniczność (WCSS)",
+    xaxis = list(title = "Liczba klastrów (k)"),
+    yaxis = list(title = "WCSS"),
+    margin = list(
+      l = 80,   # left
+      r = 40,   # right
+      b = 80,   # bottom
+      t = 80    # top
+  )
+  )
+
+p_wcss
+
+ # z wykresu możemy zauważyć, że najmniejsza wartość, począwszy od której mamy minimalna zmniejszanie wartości to k = 5  lub 4 i tym wartością  się też się przyjżymy
+```
+
+```{r}
+# analiza dla k = 4
+km_4$size
+
+km_4$centers[, 1:10]
+
+
+
+# coś co być może pomoże nam zobaczyć jakie słowa są charakterystyczne dla danych klastrów
+
+get_top_words_contrastive <- function(dtm, km, cluster_id, top_n = 10) {
+  
+  in_cluster  <- km$cluster == cluster_id
+  out_cluster <- km$cluster != cluster_id
+  
+  mu_in  <- colMeans(dtm[in_cluster, , drop = FALSE])
+  mu_out <- colMeans(dtm[out_cluster, , drop = FALSE])
+  
+  score <- mu_in - mu_out
+  score <- sort(score, decreasing = TRUE)
+  
+  head(score, top_n)
+}
+
+for (k in 1:4) {
+  cat("\n====================\n")
+  cat("CLUSTER", k, "\n")
+  print(get_top_words_contrastive(dtm_filtered, km_4, k, 10))
+}
+
+# to co otrzymaliśmy jest dosyć charakterystyczne dla klastrów chociażby dla klastra 2 słoa sugerują raczej na tematykę matematyczną, funkcja, consider, define, depend i tak dalej dla klastra 3 mamy coś co sugerowałoby na histoię matematyki i fizyki jakiś wielkich umysłów, a słowa dla klastra numer 4 sugerują tematykę historyczną
+```
+
+```{r}
+# anlogicznie przeanalizujemy dla k = 5
+
+for (k in 1:5) {
+  cat("\n====================\n")
+  cat("CLUSTER", k, "\n")
+  print(get_top_words_contrastive(dtm_filtered, km_5, k, 10))
+}
+
+
+# możemy zauważyć, że słownictwo dla klastra 1 jest dosyć typowo naukowe dla nauk ściłśych jak fizyka czy matematyka
+# klaster 2 charakteryzuje się słownictwem tytułów nauków więc może coś o dziennikach oraz biografii matematyków, fizyków ich historia
+# w klastrze 3 mamy typowe słownictwo dla historii społeczeństwa i kultury, przywództwa
+# klaster 4 słownictwo typowo matematyczne
+# klaster 5 być może dotyczy opisów historycznych, społecznyc i geogradficznych
+
+# co w miarę pokrywa się z naszymi kategoriami
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
