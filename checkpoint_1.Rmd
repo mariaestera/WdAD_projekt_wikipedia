@@ -1,0 +1,196 @@
+---
+title: "project_checkpoint_1"
+author: "Damian Moskała"
+date: "2026-04-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# install.packages("forecast")
+library(forecast) # BoxCox
+library(dplyr)
+library(MASS)
+```
+
+
+# 1. Wczytanie datasetu
+
+
+```{r}
+features_cols = c('log_word_count', 'log_num_links_internal', 'log_num_edits', 'creation_date_timestamp', 'log_num_categories')
+label_col = 'type'
+
+data = read.csv('wikipedia.csv', row.names = "X")
+data = data[c(features_cols, label_col)]
+head(data)
+```
+
+## Naszymi etykietami będzie cecha type
+
+```{r}
+unique(data["type"])
+```
+
+Wybierzmy tylko artykuły o jasno określonych dziedzinach.
+
+```{r}
+class_labels = c(
+  "mathematics",
+  "physics",
+  "history"
+)
+
+data = data[data[[label_col]] %in% class_labels,]
+
+```
+
+## Histogramy zmiennych objaśniających
+
+```{r}
+for (col in features_cols){
+  hist(data[[col]], main=col, breaks=30)
+}
+```
+
+
+Zauważmy że zmienne określające liczbę linków oraz edycji mają nienaturalnie duże skupisko wartości w punkcie maksymalnej wartości, więc prawdopodobnie jest to limit i te próbki mają znizone wartosci.
+
+```{r}
+max_links = max(data[["log_num_links_internal"]])
+max_edits = max(data[["log_num_edits"]])
+
+data = data[
+  ( data[["log_num_links_internal"]] < max_links ) & ( data[["log_num_edits"]] < max_edits  ), 
+  ]
+
+```
+
+```{r}
+
+for (col in features_cols){
+  hist(data[[col]], main=col, breaks=30)
+}
+
+```
+
+## Boxcox
+Użyjemy do tego gotowych implementacji z biblioteki forecast
+
+```{r}
+min_ts <- min(data[["creation_date_timestamp"]])
+data$ts_small <- (data[["creation_date_timestamp"]] - min_ts) / 86400 + 1
+
+cols_to_transform <- c("log_word_count", "log_num_links_internal", 
+                       "log_num_edits", "log_num_categories", "ts_small")
+
+
+for (col in cols_to_transform){
+  lambda = BoxCox.lambda(data[[col]])
+  data[col] = BoxCox(data[col], lambda = lambda)
+}
+
+for (col in c(features_cols,"ts_small" )){
+  hist(data[[col]], main=col, breaks=30)
+}
+```
+
+## Skalowanie
+
+
+```{r}
+data[cols_to_transform] = scale(data[cols_to_transform])
+
+for (col in c(features_cols,"ts_small" )){
+  hist(data[[col]], main=col, breaks=30)
+}
+
+data = data %>%
+  dplyr::select(-creation_date_timestamp,
+                -all_of(label_col), all_of(label_col)) # To przenosi etykiery na koniec a tak lubię <3
+head(data)
+```
+
+# Podział na zbiór treningowy i testowy
+
+
+```{r}
+set.seed(123)
+
+
+train_set_procent = 0.8
+train_idx <- sample(1:nrow(data), train_set_procent * nrow(data))
+
+train_data = data[train_idx,]
+test_data = data[-train_idx,]
+
+# nrow(train_data) + nrow(test_data) - nrow(data) == 0
+```
+
+# LDA
+
+```{r}
+lda_fit <- lda(type ~ ., 
+               data = train_data)
+lda_fit
+```
+
+Dla 3 klas (matma, fizyka, historia) powstaną 2 funkcje dyskryminacyjne (LD1 i LD2)
+
+```{r}
+plot(lda_fit)
+```
+
+
+```{r}
+lda_test_pred <- predict(lda_fit, test_data)
+
+```
+
+
+```{r}
+cat("\n--- Tabela pomyłek LDA ---\n")
+table(Przewidziane = lda_test_pred$class, Rzeczywiste = test_data[[label_col]])
+
+accuracy_lda <- mean(lda_test_pred$class == test_data[[label_col]])
+cat(sprintf("Dokładność LDA: %.2f%%\n", accuracy_lda * 100))
+```
+
+# QDA
+
+
+```{r}
+qda_fit <- qda(type ~ ., 
+               data = train_data)
+qda_fit
+```
+
+
+```{r}
+qda_test_pred <- predict(qda_fit, test_data)
+```
+
+
+```{r}
+cat("\n--- Tabela pomyłek QDA ---\n")
+table(Przewidziane = qda_test_pred$class, Rzeczywiste = test_data[[label_col]])
+
+accuracy_qda <- mean(qda_test_pred$class == test_data[[label_col]])
+cat(sprintf("Dokładność QDA: %.2f%%\n", accuracy_qda * 100))
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+ 
