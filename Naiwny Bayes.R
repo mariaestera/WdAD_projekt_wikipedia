@@ -57,13 +57,13 @@ data=data[, c('type', 'title')]
 data_test=data[test_sample, ]
 data = data[-test_sample, ]
 data_valid = data[valid_sample, ]
-data_train=data[-valid_sample, ]
+data_train = data[-valid_sample, ]
 rm(data)
 
-dtm_test=dtm_sparse[test_sample, ]
+dtm_test = dtm_sparse[test_sample, ]
 dtm_sparse = dtm_sparse[-test_sample, ]
 dtm_valid = dtm_sparse[valid_sample, ]
-dtm_train=dtm_sparse[-valid_sample, ]
+dtm_train = dtm_sparse[-valid_sample, ]
 rm(dtm_sparse)
 
 #Ile słów wybrać? W tym celu pomoże nam zbiór walidacyjny
@@ -73,14 +73,14 @@ freq_words1 = names(word_count1[word_count1>=25])
 dtm_train1 = dtm_train[, freq_words1]
 dtm_valid1 = dtm_valid[, freq_words1]
 dtm_test1 = dtm_test[, freq_words1]
-dim(dtm_test1) # zostało 15823 najważniejszych
+dim(dtm_train1) # zostało 15823 najważniejszych
 
 word_count2 = colSums(dtm_train)
 freq_words2 = names(word_count2[word_count2>=100])
 dtm_train2 = dtm_train[, freq_words2]
 dtm_valid2 = dtm_valid[, freq_words2]
 dtm_test2 = dtm_test[, freq_words2]
-dim(dtm_test2) #zostało 6292 najważniejszych słów
+dim(dtm_train2) #zostało 6292 najważniejszych słów
 
 dtm_title_test = dtm_title_sparse[test_sample, ]
 dtm_title_sparse = dtm_title_sparse[-test_sample, ]
@@ -130,6 +130,9 @@ print('model 2 laplace')
 gmodels::CrossTable(pred_laplace2, data_valid$type, prop.chisq = F, prop.c = F, prop.r = F, dnn=c('predicted', 'actual'))
 print(sum(as.character(pred_laplace2)==data_valid[['type']])/25) #dokładność 61.36%
 
-#najlepszy okazał się być model pierwszy, wybieramy go i sprawdzamy ostateczną dokładność na zbiorze testowym
-gmodels::CrossTable(pred1, data_test$type, prop.chisq = F, prop.c = F, prop.r = F, dnn=c('predicted', 'actual'))
-sum(as.character(pred1)==data_test[['type']])/25 #ostateczna dokładność na zbiorze testowym - 65.6
+#najlepszy okazał się być model pierwszy
+#szkolimy go na całym zbiorze treningowym i sprawdzamy ostateczną dokładność na zbiorze testowym
+model = bernoulli_naive_bayes(x=rbind(train1, valid1), c(data_train$type, data_valid$type))
+pred = predict(model, test1, type='class')
+gmodels::CrossTable(pred, data_test$type, prop.chisq = F, prop.c = F, prop.r = F, dnn=c('predicted', 'actual'))
+sum(as.character(pred)==data_test[['type']])/50 #ostateczna dokładność na zbiorze testowym - 64.78%
