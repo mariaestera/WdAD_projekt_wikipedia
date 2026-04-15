@@ -21,10 +21,10 @@ library(MASS)
 
 
 ```{r}
-features_cols = c('log_word_count', 'log_num_links_internal', 'log_num_edits', 'creation_date_timestamp', 'log_num_categories')
+features_cols = c('word_count', 'num_links_internal', 'num_edits', 'creation_date_timestamp', 'num_categories')
 label_col = 'type'
 
-data = read.csv('wikipedia.csv', row.names = "X")
+data = read.csv('data/wikipedia.csv', row.names = "X")
 data = data[c(features_cols, label_col)]
 head(data)
 ```
@@ -60,11 +60,11 @@ for (col in features_cols){
 Zauważmy że zmienne określające liczbę linków oraz edycji mają nienaturalnie duże skupisko wartości w punkcie maksymalnej wartości, więc prawdopodobnie jest to limit i te próbki mają znizone wartosci.
 
 ```{r}
-max_links = max(data[["log_num_links_internal"]])
-max_edits = max(data[["log_num_edits"]])
+max_links = max(data[["num_links_internal"]])
+max_edits = max(data[["num_edits"]])
 
 data = data[
-  ( data[["log_num_links_internal"]] < max_links ) & ( data[["log_num_edits"]] < max_edits  ), 
+  ( data[["num_links_internal"]] < max_links ) & ( data[["num_edits"]] < max_edits  ), 
   ]
 
 ```
@@ -84,16 +84,16 @@ Użyjemy do tego gotowych implementacji z biblioteki forecast
 min_ts <- min(data[["creation_date_timestamp"]])
 data$ts_small <- (data[["creation_date_timestamp"]] - min_ts) / 86400 + 1
 
-cols_to_transform <- c("log_word_count", "log_num_links_internal", 
-                       "log_num_edits", "log_num_categories", "ts_small")
+cols_to_transform <- c("word_count", "num_links_internal", 
+                       "num_edits", "num_categories", "ts_small")
 
 
 for (col in cols_to_transform){
-  lambda = BoxCox.lambda(data[[col]])
+  lambda = BoxCox.lambda(data[[col]]+1)
   data[col] = BoxCox(data[col], lambda = lambda)
 }
 
-for (col in c(features_cols,"ts_small" )){
+for (col in cols_to_transform){
   hist(data[[col]], main=col, breaks=30)
 }
 ```
