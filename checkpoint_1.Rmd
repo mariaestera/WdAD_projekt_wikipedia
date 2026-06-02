@@ -154,7 +154,17 @@ props_transformed <- prop.table(table(data_transformed$type))
 props_transformed
 ```
 
-Sprawdźmy jaką skuteczność będzie miał model losowo przypisujący klasy z odpowiednimi prawdopodobieństwami.
+Sprawdźmy jaką skuteczność będzie miał model losowo przypisujący klasy z odpowiednimi prawdopodobieństwami. Ale najpierw napiszmy funckję do wyświetlania tabeli i skuteczności danej metody.
+
+```{r}
+show_table <- function(method_name, predicted, real=test_data[[label_col]]){
+  cat("\n--- Tabela pomyłek ", method_name, " ---\n")
+  print(table(Przewidziane = predicted, Rzeczywiste = real))
+
+  accuracy <- mean(predicted == real)
+  sprintf("Dokładność (%s): %.2f%%\n", method_name, accuracy * 100)
+}
+```
 
 ```{r}
 set.seed(2137)
@@ -163,17 +173,9 @@ benchmark <- sample(class_labels, length(test_data$type), replace = TRUE, prob =
 
 benchmark_transformed <- sample(class_labels, length(test_data_transformed$type), replace = TRUE, prob = table(data_transformed$type))
 
-cat("\n--- Tabela pomyłek Benchmark ---\n")
-table(Przewidziane = benchmark, Rzeczywiste = test_data[[label_col]])
+show_table("Benchmark", benchmark)
 
-accuracy <- mean(benchmark == test_data[[label_col]])
-cat(sprintf("Dokładność Benchmarku: %.2f%%\n", accuracy * 100))
-
-cat("\n--- Tabela pomyłek Benchmark po transformacji ---\n")
-table(Przewidziane = benchmark_transformed, Rzeczywiste = test_data_transformed[[label_col]])
-
-accuracy_trans <- mean(benchmark_transformed == test_data_transformed[[label_col]])
-cat(sprintf("Dokładność Benchmarku: %.2f%%\n", accuracy * 100))
+show_table("Benchmark po transformacji", benchmark_transformed, test_data_transformed[[label_col]])
 ```
 
 # LDA
