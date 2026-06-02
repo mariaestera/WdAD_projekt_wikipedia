@@ -73,6 +73,7 @@ data_transformed = data[
 
 ```
 
+
 ```{r}
 
 for (col in features_cols){
@@ -141,6 +142,40 @@ test_data_transformed = data_transformed[-train_idx,]
 # nrow(train_data) + nrow(test_data) - nrow(data) == 0
 ```
 
+## Benchmark
+
+Sprawdźmy jakie są proporcje poszczególnych klas
+
+```{r}
+props <- prop.table(table(data$type))
+props
+
+props_transformed <- prop.table(table(data_transformed$type))
+props_transformed
+```
+
+Sprawdźmy jaką skuteczność będzie miał model losowo przypisujący klasy z odpowiednimi prawdopodobieństwami.
+
+```{r}
+set.seed(2137)
+
+benchmark <- sample(class_labels, length(test_data$type), replace = TRUE, prob = table(data$type))
+
+benchmark_transformed <- sample(class_labels, length(test_data_transformed$type), replace = TRUE, prob = table(data_transformed$type))
+
+cat("\n--- Tabela pomyłek Benchmark ---\n")
+table(Przewidziane = benchmark, Rzeczywiste = test_data[[label_col]])
+
+accuracy <- mean(benchmark == test_data[[label_col]])
+cat(sprintf("Dokładność Benchmarku: %.2f%%\n", accuracy * 100))
+
+cat("\n--- Tabela pomyłek Benchmark po transformacji ---\n")
+table(Przewidziane = benchmark_transformed, Rzeczywiste = test_data_transformed[[label_col]])
+
+accuracy_trans <- mean(benchmark_transformed == test_data_transformed[[label_col]])
+cat(sprintf("Dokładność Benchmarku: %.2f%%\n", accuracy * 100))
+```
+
 # LDA
 
 ```{r}
@@ -207,6 +242,8 @@ partimat(type ~ ., data = klar_train_data, method = "qda")
 ```
 
 ```{r}
+
+
 ```
 
 
