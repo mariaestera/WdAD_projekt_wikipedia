@@ -241,11 +241,31 @@ partimat(type ~ ., data = klar_train_data, method = "lda")
 partimat(type ~ ., data = klar_train_data, method = "qda")
 ```
 
+# Drzewa decyzjne i metody na nich oparte
+
+## Zwykłe drzewo decyzyjne
+
 ```{r}
+set.seed(2137)
+library(tree)
 
+data$type <- as.factor(data$type)
 
+tree <- tree(data$type ~ ., data, subset=train_idx)
+summary(tree)
+
+plot(tree)
+text(tree, pretty = 0)
+
+tree_pred <- predict(tree, test_data, type = "class")
+
+cat("\n--- Tabela pomyłek Pojedynczego Drzewa ---\n")
+table(Przewidziane = tree_pred, Rzeczywiste = test_data[[label_col]])
+
+accuracy_tree <- mean(tree_pred == test_data[[label_col]])
+cat(sprintf("Dokładność Pojedynczego Drzewa: %.2f%%\n", accuracy_tree * 100))
 ```
-
+Jak widać pojedycze drzewo nie jest zbyt wyrafinowane.
 
 ```{r}
 ```
