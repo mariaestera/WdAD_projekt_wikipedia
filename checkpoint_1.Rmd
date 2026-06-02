@@ -57,13 +57,17 @@ for (col in features_cols){
 ```
 
 
-Zauważmy że zmienne określające liczbę linków oraz edycji mają nienaturalnie duże skupisko wartości w punkcie maksymalnej wartości, więc prawdopodobnie jest to limit i te próbki mają znizone wartosci.
+Zauważmy że zmienne określające liczbę linków oraz edycji mają nienaturalnie duże skupisko wartości w punkcie maksymalnej wartości, więc prawdopodobnie jest to limit i te próbki mają znizone wartosci. 
 
+Ponadto, przeskaluje się kolumnę z datami utworzenia artykułu, tak aby były w niej mniejsze liczby (obecnie jest ona w sekundach). Odejmie się timestamp najwcześniejszego arykułu i podzieli się przez liczbę sekund w dobie, i w ten sposób otrzymamy datę utworzenia artykułu wyrażoną w dniach od pierwszego artykułu.
 ```{r}
 max_links = max(data[["num_links_internal"]])
 max_edits = max(data[["num_edits"]])
 
-data = data[
+min_ts <- min(data[["creation_date_timestamp"]])
+data$ts_small <- (data[["creation_date_timestamp"]] - min_ts) / 86400 + 1
+
+data_transformed = data[
   ( data[["num_links_internal"]] < max_links ) & ( data[["num_edits"]] < max_edits  ), 
   ]
 
@@ -72,7 +76,7 @@ data = data[
 ```{r}
 
 for (col in features_cols){
-  hist(data[[col]], main=col, breaks=30)
+  hist(data_transformed[[col]], main=col, breaks=30)
 }
 
 ```
@@ -81,20 +85,17 @@ for (col in features_cols){
 Użyjemy do tego gotowych implementacji z biblioteki forecast
 
 ```{r}
-min_ts <- min(data[["creation_date_timestamp"]])
-data$ts_small <- (data[["creation_date_timestamp"]] - min_ts) / 86400 + 1
-
 cols_to_transform <- c("word_count", "num_links_internal", 
                        "num_edits", "num_categories", "ts_small")
 
 
 for (col in cols_to_transform){
-  lambda = BoxCox.lambda(data[[col]]+1)
-  data[col] = BoxCox(data[col], lambda = lambda)
+  lambda = BoxCox.lambda(data_transformed[[col]]+1)
+  data_transformed[col] = BoxCox(data_transformed[col], lambda = lambda)
 }
 
 for (col in cols_to_transform){
-  hist(data[[col]], main=col, breaks=30)
+  hist(data_transformed[[col]], main=col, breaks=30)
 }
 ```
 
@@ -102,16 +103,21 @@ for (col in cols_to_transform){
 
 
 ```{r}
-data[cols_to_transform] = scale(data[cols_to_transform])
+data_transformed[cols_to_transform] = scale(data_transformed[cols_to_transform])
 
 for (col in c(features_cols,"ts_small" )){
-  hist(data[[col]], main=col, breaks=30)
+  hist(data_transformed[[col]], main=col, breaks=30)
 }
+
+data_transformed = data_transformed %>%
+  dplyr::select(-creation_date_timestamp,
+                -all_of(label_col), all_of(label_col)) # To przenosi etykiery na koniec a tak lubię <3
 
 data = data %>%
   dplyr::select(-creation_date_timestamp,
                 -all_of(label_col), all_of(label_col)) # To przenosi etykiery na koniec a tak lubię <3
-head(data)
+
+head(data_transformed)
 ```
 
 # Podział na zbiór treningowy i testowy
@@ -127,6 +133,11 @@ train_idx <- sample(1:nrow(data), train_set_procent * nrow(data))
 train_data = data[train_idx,]
 test_data = data[-train_idx,]
 
+train_idx_transformed <- sample(1:nrow(data_transformed), train_set_procent * nrow(data_transformed))
+
+train_data_transformed = data_transformed[train_idx,]
+test_data_transformed = data_transformed[-train_idx,]
+
 # nrow(train_data) + nrow(test_data) - nrow(data) == 0
 ```
 
@@ -134,7 +145,7 @@ test_data = data[-train_idx,]
 
 ```{r}
 lda_fit <- lda(type ~ ., 
-               data = train_data)
+               data = train_data_transformed)
 lda_fit
 ```
 
@@ -146,16 +157,16 @@ plot(lda_fit)
 
 
 ```{r}
-lda_test_pred <- predict(lda_fit, test_data)
+lda_test_pred <- predict(lda_fit, test_data_transformed)
 
 ```
 
 
 ```{r}
 cat("\n--- Tabela pomyłek LDA ---\n")
-table(Przewidziane = lda_test_pred$class, Rzeczywiste = test_data[[label_col]])
+table(Przewidziane = lda_test_pred$class, Rzeczywiste = test_data_transformed[[label_col]])
 
-accuracy_lda <- mean(lda_test_pred$class == test_data[[label_col]])
+accuracy_lda <- mean(lda_test_pred$class == test_data_transformed[[label_col]])
 cat(sprintf("Dokładność LDA: %.2f%%\n", accuracy_lda * 100))
 ```
 
@@ -164,28 +175,36 @@ cat(sprintf("Dokładność LDA: %.2f%%\n", accuracy_lda * 100))
 
 ```{r}
 qda_fit <- qda(type ~ ., 
-               data = train_data)
+               data = train_data_transformed)
 qda_fit
 ```
 
 
 ```{r}
-qda_test_pred <- predict(qda_fit, test_data)
+qda_test_pred <- predict(qda_fit, test_data_transformed)
 ```
 
 
 ```{r}
 cat("\n--- Tabela pomyłek QDA ---\n")
-table(Przewidziane = qda_test_pred$class, Rzeczywiste = test_data[[label_col]])
+table(Przewidziane = qda_test_pred$class, Rzeczywiste = test_data_transformed[[label_col]])
 
-accuracy_qda <- mean(qda_test_pred$class == test_data[[label_col]])
+accuracy_qda <- mean(qda_test_pred$class == test_data_transformed[[label_col]])
 cat(sprintf("Dokładność QDA: %.2f%%\n", accuracy_qda * 100))
 ```
 
 
 ```{r}
-```
+#install.packages("klaR")
+library(klaR)
 
+klar_train_data <- train_data_transformed
+klar_train_data$type <- as.factor(train_data_transformed$type)
+levels(klar_train_data$type)
+
+partimat(type ~ ., data = klar_train_data, method = "lda")
+partimat(type ~ ., data = klar_train_data, method = "qda")
+```
 
 ```{r}
 ```
