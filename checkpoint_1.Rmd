@@ -269,6 +269,88 @@ cat(sprintf("Dokładność Pojedynczego Drzewa: %.2f%%\n", accuracy_tree * 100))
 ```
 Jak widać pojedycze drzewo nie jest zbyt wyrafinowane.
 
+## Bagging i lasy losowe
+
 ```{r}
+library(randomForest)
+set.seed(2137)
+
+bag <- randomForest(data$type ~ ., data = data, subset = train_idx,
+                           mtry = 5, importance = TRUE, ntree=500)
+
+bag
+
+bag_pred <- predict(bag, newdata = test_data)
+
+show_table("Bagging", bag_pred)
 ```
+ Spróbujmy użyć różnych ilość drzew
  
+```{r}
+set.seed(2137)
+
+bag_100 <- randomForest(data$type ~ ., data = data, subset = train_idx,
+                           mtry = 5, importance = TRUE, ntree=100)
+
+bag_100
+
+bag_pred_100 <- predict(bag_100, newdata = test_data)
+
+show_table("Bagging", bag_pred_100)
+```
+```{r}
+set.seed(2137)
+
+bag_5000 <- randomForest(data$type ~ ., data = data, subset = train_idx,
+                           mtry = 5, importance = TRUE, ntree=5000)
+
+bag_5000
+
+bag_pred_5000 <- predict(bag_5000, newdata = test_data)
+
+show_table("Bagging", bag_pred_5000)
+```
+Model ze 100 drzew osiąga niemal takie same rezultaty jak ten z 500 czy z 5000 drzew, więc jest lepszy.
+
+Spróbujmy teraz zrobić las losowy. Poniewaś $\sqrt5 \approx 2$ zaczniemy od `mtry`=2.
+```{r}
+set.seed(2137)
+
+random_forest <- randomForest(data$type ~ ., data = data, subset = train_idx,
+                           mtry = 2, importance = TRUE, ntree=500)
+
+random_forest
+
+rf_pred <- predict(random_forest, newdata = test_data)
+
+show_table("Las losowy", rf_pred)
+```
+Sprawdźmy inne wartości `mtry`
+
+```{r}
+set.seed(2137)
+
+random_forest <- randomForest(data$type ~ ., data = data, subset = train_idx,
+                           mtry = 3, importance = TRUE, ntree=500)
+
+random_forest
+
+rf_pred <- predict(random_forest, newdata = test_data)
+
+show_table("Las losowy", rf_pred)
+```
+
+```{r}
+set.seed(2137)
+
+random_forest <- randomForest(data$type ~ ., data = data, subset = train_idx,
+                           mtry = 4, importance = TRUE, ntree=500)
+
+random_forest
+
+rf_pred <- predict(random_forest, newdata = test_data)
+
+show_table("Las losowy", rf_pred)
+```
+
+Jak widać najlepsze rezultaty osiągamy dla lasu losowego z parametrem `mtry` = 2.
