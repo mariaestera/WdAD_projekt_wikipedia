@@ -252,19 +252,22 @@ set.seed(2137)
 library(tree)
 
 data$type <- as.factor(data$type)
+data_tree <- data[-4]
+train_data_tree <- train_data[-4]
+test_data_tree <- test_data[-4]
 
-tree <- tree(data$type ~ ., data, subset=train_idx)
+tree <- tree(data_tree$type ~ ., data_tree, subset=train_idx, control = tree.control(nobs = length(train_idx), minsize = 10))
 summary(tree)
 
 plot(tree)
 text(tree, pretty = 0)
 
-tree_pred <- predict(tree, test_data, type = "class")
+tree_pred <- predict(tree, test_data_tree, type = "class")
 
 cat("\n--- Tabela pomyłek Pojedynczego Drzewa ---\n")
-table(Przewidziane = tree_pred, Rzeczywiste = test_data[[label_col]])
+table(Przewidziane = tree_pred, Rzeczywiste = test_data_tree[[label_col]])
 
-accuracy_tree <- mean(tree_pred == test_data[[label_col]])
+accuracy_tree <- mean(tree_pred == test_data_tree[[label_col]])
 cat(sprintf("Dokładność Pojedynczego Drzewa: %.2f%%\n", accuracy_tree * 100))
 ```
 Jak widać pojedycze drzewo nie jest zbyt wyrafinowane.
@@ -275,12 +278,12 @@ Jak widać pojedycze drzewo nie jest zbyt wyrafinowane.
 library(randomForest)
 set.seed(2137)
 
-bag <- randomForest(data$type ~ ., data = data, subset = train_idx,
+bag <- randomForest(data_tree$type ~ ., data = data_tree, subset = train_idx,
                            mtry = 5, importance = TRUE, ntree=500)
 
 bag
 
-bag_pred <- predict(bag, newdata = test_data)
+bag_pred <- predict(bag, newdata = test_data_tree)
 
 show_table("Bagging", bag_pred)
 ```
@@ -289,24 +292,24 @@ show_table("Bagging", bag_pred)
 ```{r}
 set.seed(2137)
 
-bag_100 <- randomForest(data$type ~ ., data = data, subset = train_idx,
+bag_100 <- randomForest(data_tree$type ~ ., data = data_tree, subset = train_idx,
                            mtry = 5, importance = TRUE, ntree=100)
 
 bag_100
 
-bag_pred_100 <- predict(bag_100, newdata = test_data)
+bag_pred_100 <- predict(bag_100, newdata = test_data_tree)
 
 show_table("Bagging", bag_pred_100)
 ```
 ```{r}
 set.seed(2137)
 
-bag_5000 <- randomForest(data$type ~ ., data = data, subset = train_idx,
+bag_5000 <- randomForest(data_tree$type ~ ., data = data_tree, subset = train_idx,
                            mtry = 5, importance = TRUE, ntree=5000)
 
 bag_5000
 
-bag_pred_5000 <- predict(bag_5000, newdata = test_data)
+bag_pred_5000 <- predict(bag_5000, newdata = test_data_tree)
 
 show_table("Bagging", bag_pred_5000)
 ```
@@ -316,12 +319,11 @@ Spróbujmy teraz zrobić las losowy. Poniewaś $\sqrt5 \approx 2$ zaczniemy od `
 ```{r}
 set.seed(2137)
 
-random_forest <- randomForest(data$type ~ ., data = data, subset = train_idx,
-                           mtry = 2, importance = TRUE, ntree=500)
+random_forest <- randomForest(data_tree$type ~ ., data = data_tree, subset = train_idx, mtry = 2, importance = TRUE, ntree=100)
 
 random_forest
 
-rf_pred <- predict(random_forest, newdata = test_data)
+rf_pred <- predict(random_forest, newdata = test_data_tree)
 
 show_table("Las losowy", rf_pred)
 ```
@@ -330,12 +332,11 @@ Sprawdźmy inne wartości `mtry`
 ```{r}
 set.seed(2137)
 
-random_forest <- randomForest(data$type ~ ., data = data, subset = train_idx,
-                           mtry = 3, importance = TRUE, ntree=500)
+random_forest <- randomForest(data_tree$type ~ ., data = data_tree, subset = train_idx, mtry = 3, importance = TRUE, ntree=100)
 
 random_forest
 
-rf_pred <- predict(random_forest, newdata = test_data)
+rf_pred <- predict(random_forest, newdata = test_data_tree)
 
 show_table("Las losowy", rf_pred)
 ```
@@ -343,12 +344,11 @@ show_table("Las losowy", rf_pred)
 ```{r}
 set.seed(2137)
 
-random_forest <- randomForest(data$type ~ ., data = data, subset = train_idx,
-                           mtry = 4, importance = TRUE, ntree=500)
+random_forest <- randomForest(data_tree$type ~ ., data = data_tree, subset = train_idx, mtry = 4, importance = TRUE, ntree=100)
 
 random_forest
 
-rf_pred <- predict(random_forest, newdata = test_data)
+rf_pred <- predict(random_forest, newdata = test_data_tree)
 
 show_table("Las losowy", rf_pred)
 ```
